@@ -5,9 +5,7 @@ from airflow import DAG
 from airflow.operators.empty import EmptyOperator
 from airflow.operators.python import PythonOperator
 from airflow.operators.subdag import SubDagOperator
-from airflow.utils.task_group import TaskGroup
 from airflow.utils.trigger_rule import TriggerRule
-from airflow.exceptions import AirflowSkipException
 
 
 #######################################
@@ -32,33 +30,33 @@ def create_mapper_subdag(parent_dag_name, child_dag_name, args):
     )
 
     with subdag:
-        # Example: multiple mapper tasks
         def dummy_mapper(mapper_id):
             """
-            Simulate some "map" job. Possibly returns random data.
+            Simulate some "map" job. Possibly returns random data for demonstration.
             """
             print(f"Mapper {mapper_id} is running a dummy job.")
-            # Return some random data to XCom to illustrate
+            # Return some random data to XCom to simulate an output
             return {
                 'mapper_id': mapper_id,
                 'random_value': random.randint(1, 100)
             }
 
+        # Example: two mapper tasks in parallel
         mapper_1 = PythonOperator(
             task_id='mapper_1',
             python_callable=dummy_mapper,
             op_kwargs={'mapper_id': '1'},
+            queue='default'  # Configure queue here if needed
         )
 
         mapper_2 = PythonOperator(
             task_id='mapper_2',
             python_callable=dummy_mapper,
             op_kwargs={'mapper_id': '2'},
+            queue='default'  # Configure queue here if needed
         )
 
-        # You can add more mappers in parallel if needed
-        # For simplicity, no special dependencies: run in parallel
-        # If you wanted them in sequence, do: mapper_1 >> mapper_2
+        # If more mappers are needed, define similarly and add them in parallel
 
     return subdag
 
@@ -72,66 +70,55 @@ default_args = {
     'start_date': datetime(2023, 1, 1),
     'retries': 1,
     'retry_delay': timedelta(minutes=5),
-    # You can add more args like email_on_failure, etc.
+    # Add email_on_failure, etc., if desired
 }
 
 with DAG(
     dag_id='mapreduce_subdag_example',
     default_args=default_args,
-    description='MapReduce-style DAG with a SubDagOperator for mapper tasks, then reduce in main DAG.',
+    description='MapReduce-style DAG with SubDagOperator (mappers), then reduce in main DAG.',
     schedule_interval='@daily',
     catchup=False,
-    tags=['example', 'subdag', 'mapreduce']
+    tags=['example', 'subdag', 'mapreduce'],
 ) as dag:
 
-    start = EmptyOperator(
-        task_id='start'
-    )
+    start = EmptyOperator(task_id='start')
 
-    # The SubDagOperator will call our subdag creation function
+    # SubDagOperator references our sub-DAG definition function
     subdag_op = SubDagOperator(
-        task_id='mapper_subdag',         # child_dag_name
+        task_id='mapper_subdag',  # child_dag_name
         subdag=create_mapper_subdag(
             parent_dag_name='mapreduce_subdag_example',
             child_dag_name='mapper_subdag',
             args=default_args
         ),
         default_args=default_args,
-        executor_kwargs={"queue": "default"},  # Optional; specify a queue if needed
-        dag=dag
     )
 
     def reducer_function(**kwargs):
         """
-        Simulates the "reduce" step, aggregating or using data from the mapper tasks.
+        Simulates the "reduce" step, aggregating data from the mapper tasks.
         We'll pull XCom data from the sub-DAG tasks for demonstration.
         """
-
         ti = kwargs['ti']
 
-        # The sub-DAG's task IDs will be mapper_subdag.mapper_1, mapper_subdag.mapper_2, etc.
-        mapper_1_data = ti.xcom_pull(
-            key='return_value',
-            task_ids='mapper_subdag.mapper_1'
-        )
-        mapper_2_data = ti.xcom_pull(
-            key='return_value',
-            task_ids='mapper_subdag.mapper_2'
-        )
+        # The sub-DAG's tasks will be named 'mapper_subdag.mapper_1', etc.
+        mapper_1_data = ti.xcom_pull(task_ids='mapper_subdag.mapper_1')
+        mapper_2_data = ti.xcom_pull(task_ids='mapper_subdag.mapper_2')
 
         print(f"Reducer sees mapper_1 data = {mapper_1_data}")
         print(f"Reducer sees mapper_2 data = {mapper_2_data}")
 
         # Combine or aggregate the results (dummy example)
-        all_random_values = []
+        random_values = []
         if mapper_1_data:
-            all_random_values.append(mapper_1_data.get('random_value'))
+            random_values.append(mapper_1_data.get('random_value', 0))
         if mapper_2_data:
-            all_random_values.append(mapper_2_data.get('random_value'))
+            random_values.append(mapper_2_data.get('random_value', 0))
 
         result = {
-            'sum_of_random_values': sum(all_random_values),
-            'count_of_mappers': len(all_random_values)
+            'sum_of_random_values': sum(random_values),
+            'count_of_mappers': len(random_values),
         }
 
         print(f"Reducer final result: {result}")
@@ -149,5 +136,5 @@ with DAG(
         trigger_rule=TriggerRule.ALL_DONE
     )
 
-    # DAG flow
+    # Define the main DAG flow:
     start >> subdag_op >> reducer_task >> end
