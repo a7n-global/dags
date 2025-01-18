@@ -14,7 +14,7 @@ default_args = {
 }
 
 with DAG(
-    'cron_dag_concurrency_test_1',
+    'cron_job_concurrency_test',
     default_args=default_args,
     description='A simple example DAG',
     schedule='*/5 * * * * *',
@@ -22,7 +22,7 @@ with DAG(
     catchup=False,
     max_active_runs=1000,
     max_active_tasks=2000,
-    dagrun_timeout=timedelta(seconds=4),
+    dagrun_timeout=timedelta(seconds=20),
 ) as dag:
 
     print_date = BashOperator(
@@ -34,7 +34,7 @@ with DAG(
 
     sleep = BashOperator(
         task_id='sleep',
-        bash_command='sleep 2',
+        bash_command='echo "Starting sleep task" && sleep 2 && echo "Sleep task completed"',
         pool='default_pool',
         pool_slots=1,
     )
