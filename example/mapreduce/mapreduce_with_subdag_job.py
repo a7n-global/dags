@@ -26,7 +26,8 @@ def create_mapper_subdag(parent_dag_name, child_dag_name, args):
         default_args=args,
         start_date=args['start_date'],
         schedule_interval=args.get('schedule_interval'),
-        catchup=False
+        catchup=False,
+        concurrency=64,
     )
 
     with subdag:
@@ -46,17 +47,17 @@ def create_mapper_subdag(parent_dag_name, child_dag_name, args):
             task_id='mapper_1',
             python_callable=dummy_mapper,
             op_kwargs={'mapper_id': '1'},
-            queue='default'  # Configure queue here if needed
+            queue='default'  # Ensure your CeleryExecutor queue allows parallel tasks
         )
 
         mapper_2 = PythonOperator(
             task_id='mapper_2',
             python_callable=dummy_mapper,
             op_kwargs={'mapper_id': '2'},
-            queue='default'  # Configure queue here if needed
+            queue='default'
         )
 
-        # If more mappers are needed, define similarly and add them in parallel
+        # Add as many mappers as you want; they can run parallel if concurrency allows
 
     return subdag
 
@@ -70,7 +71,6 @@ default_args = {
     'start_date': datetime(2023, 1, 1),
     'retries': 1,
     'retry_delay': timedelta(minutes=5),
-    # Add email_on_failure, etc., if desired
 }
 
 with DAG(
@@ -79,14 +79,15 @@ with DAG(
     description='MapReduce-style DAG with SubDagOperator (mappers), then reduce in main DAG.',
     schedule_interval='@daily',
     catchup=False,
+    concurrency=10,  # Up to 10 tasks in parallel in the main DAG
     tags=['example', 'subdag', 'mapreduce'],
 ) as dag:
 
     start = EmptyOperator(task_id='start')
 
-    # SubDagOperator references our sub-DAG definition function
+    # SubDagOperator references our sub-DAG creation function
     subdag_op = SubDagOperator(
-        task_id='mapper_subdag',  # child_dag_name
+        task_id='mapper_subdag',
         subdag=create_mapper_subdag(
             parent_dag_name='mapreduce_subdag_example',
             child_dag_name='mapper_subdag',
@@ -136,5 +137,4 @@ with DAG(
         trigger_rule=TriggerRule.ALL_DONE
     )
 
-    # Define the main DAG flow:
     start >> subdag_op >> reducer_task >> end
