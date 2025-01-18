@@ -39,6 +39,11 @@ with DAG(
         pool_slots=1,
     )
 
-    end = EmptyOperator(task_id='end')
+    end = BashOperator(
+        task_id='end',
+        bash_command='echo "End task reached"',
+        pool='default_pool',
+        pool_slots=1,
+    )
 
     print_date >> sleep >> end
