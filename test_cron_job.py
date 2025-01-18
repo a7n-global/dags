@@ -14,7 +14,7 @@ default_args = {
 }
 
 with DAG(
-    'cron_job_concurrency_test',
+    'cron_job_test',
     default_args=default_args,
     description='A simple example DAG',
     schedule='*/5 * * * * *',
