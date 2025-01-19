@@ -99,7 +99,7 @@ with DAG(
         filepath='/opt/airflow/shared/big_input_dataset_ready.txt',  # Must match what's created above
         poke_interval=30,
         timeout=60 * 60,
-        mode='poke'
+        mode='poke',
         fs_conn_id=''
     )
 
