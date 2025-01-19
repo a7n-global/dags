@@ -100,6 +100,7 @@ with DAG(
         poke_interval=30,
         timeout=60 * 60,
         mode='poke'
+        fs_conn_id=''
     )
 
     # 4) MAP EXTRACTION GROUP - multiple parallel tasks
