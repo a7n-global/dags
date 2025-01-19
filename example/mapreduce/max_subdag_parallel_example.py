@@ -1,3 +1,7 @@
+# For stress test scheduler only. Not a best practice for MapReduce job. DO NOT COPY.
+# 1. UI complexity -- It will visualize all mapper, making the graph very hard to read.
+# 2. Scheduling overhead -- deadlock
+
 from datetime import datetime, timedelta
 import random, time
 
