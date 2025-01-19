@@ -78,9 +78,9 @@ with DAG(
     dag_id='midsize_mapreduce_example',
     default_args=default_args,
     description='Map-reduce DAG for stress testing. Generates the file before waiting on it with FileSensor.',
-    schedule_interval='@daily',
+    schedule='@daily',
     catchup=False,
-    concurrency=128,  # Up to 128 tasks at once, requires cluster capacity
+    max_active_tasks=128,
     tags=['stress-test', 'map-reduce', 'parallel'],
 ) as dag:
 
@@ -117,7 +117,6 @@ with DAG(
     branch_op = BranchPythonOperator(
         task_id='branch_decision',
         python_callable=decide_branch,
-        provide_context=True
     )
 
     # 6) BIG PATH / SMALL PATH tasks
@@ -125,21 +124,18 @@ with DAG(
         task_id='big_data_path',
         python_callable=dummy_path_task,
         op_kwargs={'path_name': 'big_data'},
-        provide_context=True
     )
 
     small_data_path = PythonOperator(
         task_id='small_data_path',
         python_callable=dummy_path_task,
         op_kwargs={'path_name': 'small_data'},
-        provide_context=True
     )
 
     # 7) REDUCE (AGGREGATOR)
     reduce_task = PythonOperator(
         task_id='reduce_aggregations',
         python_callable=reduce_aggregation,
-        provide_context=True,
         trigger_rule=TriggerRule.NONE_FAILED
     )
 
