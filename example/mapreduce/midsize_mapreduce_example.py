@@ -75,7 +75,7 @@ def reduce_aggregation(**kwargs):
     }
 
 with DAG(
-    dag_id='ultimate_mapreduce_stress_test_with_file_generation',
+    dag_id='midsize_mapreduce_example',
     default_args=default_args,
     description='Map-reduce DAG for stress testing. Generates the file before waiting on it with FileSensor.',
     schedule_interval='@daily',
