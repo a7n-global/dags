@@ -139,7 +139,14 @@ with DAG(
         trigger_rule=TriggerRule.NONE_FAILED
     )
 
-    # 8) END
+    # 8) END - with cleanup
+    # garbage cleanup
+    cleanup_file = BashOperator(
+        task_id='cleanup_indicator_file',
+        bash_command='rm -f /opt/airflow/shared/big_input_dataset_ready.txt',
+        trigger_rule=TriggerRule.ALL_DONE
+    )
+
     end = EmptyOperator(
         task_id='end',
         trigger_rule=TriggerRule.ALL_DONE
@@ -147,4 +154,4 @@ with DAG(
 
     # DAG FLOW
     start >> generate_file >> wait_for_file >> map_extraction_group
-    map_extraction_group >> branch_op >> [big_data_path, small_data_path] >> reduce_task >> end
+    map_extraction_group >> branch_op >> [big_data_path, small_data_path] >> reduce_task >> cleanup_file >> end
