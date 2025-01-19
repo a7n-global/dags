@@ -90,13 +90,13 @@ with DAG(
     # 2) PRODUCE THE FILE
     generate_file = BashOperator(
         task_id='generate_input_file',
-        bash_command='touch /tmp/big_input_dataset_ready.txt && echo "Data is ready" > /tmp/big_input_dataset_ready.txt'
+        bash_command='touch /opt/airflow/shared/big_input_dataset_ready.txt && echo "Data is ready" > /opt/airflow/shared/big_input_dataset_ready.txt'
     )
 
     # 3) SENSOR - wait for that newly created file to appear
     wait_for_file = FileSensor(
         task_id='wait_for_input_file',
-        filepath='/tmp/big_input_dataset_ready.txt',  # Must match what's created above
+        filepath='/opt/airflow/shared/big_input_dataset_ready.txt',  # Must match what's created above
         poke_interval=30,
         timeout=60 * 60,
         mode='poke'
