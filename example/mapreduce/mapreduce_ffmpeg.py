@@ -101,31 +101,20 @@ def reduce_frames(**kwargs) -> Dict[str, int]:
         volume_mounts=[volume_mount, dags_volume_mount],
         container_resources=K8S_RESOURCES,
         get_logs=True,
-        do_xcom_push=True,
+        do_xcom_push=False,  # No need for XCom
         on_finish_action='delete_pod',
         in_cluster=True,
         startup_timeout_seconds=300,
-        image_pull_policy='IfNotPresent',
-        log_events_on_failure=True,
-        is_delete_operator_pod=True,
-        retries=3,
-        retry_delay=timedelta(seconds=5)
+        image_pull_policy='IfNotPresent'
     )
     
     # Execute the pod
     try:
-        result = pod.execute(context=kwargs)
+        pod.execute(context=kwargs)
+        return {'status': 'success'}
     except Exception as e:
         logger.error(f"Pod execution failed: {str(e)}")
         raise
-    
-    # Parse the result
-    if 'TOTAL_FRAMES=' not in result:
-        raise AirflowException("Failed to get total frames")
-    
-    total_frames = int(result.split('TOTAL_FRAMES=')[1].strip())
-    logger.info(f"Successfully processed total frames: {total_frames}")
-    return {'total_frames': total_frames}
 
 with DAG(
     dag_id='mapreduce_ffmpeg_cpu',
