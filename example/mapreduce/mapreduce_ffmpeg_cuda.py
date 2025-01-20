@@ -142,17 +142,14 @@ with DAG(
             echo "Generating {NUM_FILES} dummy 720p MP4 files..." && \
             for i in $(seq 0 $(({NUM_FILES}-1))); do
                 ffmpeg -y -f lavfi -i color=c=red:s=1280x720:d=2 \
-                       -vf "drawtext=text='File_$i':x=10:y=10:fontcolor=white:fontsize=24" \
+                       -c:v h264_nvenc -preset fast \
                        {SHARED_DIR}/dummy_720p_$i.mp4;
             done && \
             echo "Done generating dummy files."
         """],
         volumes=[volume],
         volume_mounts=[volume_mount],
-        container_resources=k8s.V1ResourceRequirements(
-            requests={"cpu": "1"},
-            limits={"cpu": "2"}
-        ),
+        container_resources=K8S_GPU_RESOURCES,  # Changed to use GPU for encoding
         on_finish_action='delete_pod',
         in_cluster=True,
         get_logs=True
