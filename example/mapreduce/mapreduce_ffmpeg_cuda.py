@@ -31,7 +31,7 @@ OUTPUT_FILE_PATTERN = f'{SHARED_DIR}/dummy_480p_{{i}}.mp4'
 
 # Kubernetes Config
 NAMESPACE = 'airflow'
-FFMPEG_IMAGE = 'my-ffmpeg-cuda:latest'
+FFMPEG_IMAGE = 'us.gcr.io/cloudkite-public/ffmpeg-cuda:latest'
 
 # Common K8s configurations
 K8S_GPU_RESOURCES = k8s.V1ResourceRequirements(
