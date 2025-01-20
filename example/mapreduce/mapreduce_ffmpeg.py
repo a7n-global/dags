@@ -103,11 +103,21 @@ def reduce_frames(**kwargs) -> Dict[str, int]:
         get_logs=True,
         do_xcom_push=True,
         on_finish_action='delete_pod',
-        in_cluster=True
+        in_cluster=True,
+        startup_timeout_seconds=300,
+        image_pull_policy='IfNotPresent',
+        log_events_on_failure=True,
+        is_delete_operator_pod=True,
+        retries=3,
+        retry_delay=timedelta(seconds=5)
     )
     
     # Execute the pod
-    result = pod.execute(context=kwargs)
+    try:
+        result = pod.execute(context=kwargs)
+    except Exception as e:
+        logger.error(f"Pod execution failed: {str(e)}")
+        raise
     
     # Parse the result
     if 'TOTAL_FRAMES=' not in result:
