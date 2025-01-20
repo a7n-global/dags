@@ -56,6 +56,32 @@ K8S_NVIDIA_ENV = [
     }
 ]
 
+# Add security context configuration
+K8S_SECURITY_CONTEXT = {
+    "privileged": True,  # Required for GPU access
+    "capabilities": {
+        "add": ["SYS_ADMIN"]
+    }
+}
+
+# Add device mounts
+K8S_DEVICE_MOUNTS = [
+    k8s.V1VolumeMount(
+        name='nvidia-driver',
+        mount_path='/usr/local/nvidia',
+        read_only=True
+    )
+]
+
+K8S_DEVICE_VOLUMES = [
+    k8s.V1Volume(
+        name='nvidia-driver',
+        host_path=k8s.V1HostPathVolumeSource(
+            path='/usr/local/nvidia'
+        )
+    )
+]
+
 default_args = {
     'owner': 'data-engineering',
     'depends_on_past': False,
@@ -159,13 +185,14 @@ with DAG(
             done && \
             echo "Done generating dummy files."
         """],
-        volumes=[volume],
-        volume_mounts=[volume_mount],
+        volumes=[volume] + K8S_DEVICE_VOLUMES,
+        volume_mounts=[volume_mount] + K8S_DEVICE_MOUNTS,
         container_resources=K8S_GPU_RESOURCES,
         env_vars=K8S_NVIDIA_ENV,  # Changed from env to env_vars
         on_finish_action='delete_pod',
         in_cluster=True,
-        get_logs=True
+        get_logs=True,
+        security_context=K8S_SECURITY_CONTEXT,
     )
 
     # 2) TRANSCODE TASK GROUP (PARALLEL) USING KUBERNETESPODOPERATOR
@@ -202,12 +229,13 @@ with DAG(
             arguments=[ffmpeg_cmd],
             container_resources=K8S_GPU_RESOURCES,
             env_vars=K8S_NVIDIA_ENV,  # Changed from env to env_vars
-            volumes=[volume],
-            volume_mounts=[volume_mount],
+            volumes=[volume] + K8S_DEVICE_VOLUMES,
+            volume_mounts=[volume_mount] + K8S_DEVICE_MOUNTS,
             get_logs=True,
             do_xcom_push=True,
             on_finish_action='delete_pod',
             in_cluster=True,
+            security_context=K8S_SECURITY_CONTEXT,
         )
 
     # (B) Construct the parallel tasks in a TaskGroup
