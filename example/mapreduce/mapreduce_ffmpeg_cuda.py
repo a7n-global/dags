@@ -103,6 +103,7 @@ with DAG(
         task_id='generate_720p_files',
         bash_command=f"""
         set -e
+        mkdir -p {SHARED_DIR}
         echo "Generating {NUM_FILES} dummy 720p MP4 files in {SHARED_DIR}..."
         for i in $(seq 0 $(({NUM_FILES}-1))); do
           ffmpeg -y -f lavfi -i color=c=red:s=1280x720:d=2 \
@@ -120,7 +121,9 @@ with DAG(
     #     Adjust the 'claimName' to match your K8s PersistentVolumeClaim.
     volume = k8s.V1Volume(
         name='shared-volume',
-        persistent_volume_claim=k8s.V1PersistentVolumeClaimVolumeSource(claim_name='airflow-shared')
+        host_path=k8s.V1HostPathVolumeSource(
+            path='/opt/airflow/shared'
+        )
     )
     volume_mount = k8s.V1VolumeMount(
         name='shared-volume',
@@ -189,7 +192,15 @@ with DAG(
     # 4) CLEANUP (OPTIONAL) - remove the dummy files afterwards
     cleanup_files = BashOperator(
         task_id='cleanup_files',
-        bash_command=f'rm -f {SHARED_DIR}/dummy_*',
+        bash_command=f"""
+        if [ -d "{SHARED_DIR}" ]; then
+            rm -f {SHARED_DIR}/dummy_*.mp4
+            echo "Cleaned up temporary files"
+        else
+            echo "Directory {SHARED_DIR} not found"
+            exit 1
+        fi
+        """,
         trigger_rule=TriggerRule.ALL_DONE
     )
 
