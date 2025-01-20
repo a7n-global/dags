@@ -114,7 +114,7 @@ volume_mount = k8s.V1VolumeMount(
 # DAG DEFINITION
 # -------------------------------------------------------------
 with DAG(
-    dag_id='mapreduce_ffmpeg_k8s',
+    dag_id='mapreduce_ffmpeg_cpu',
     default_args=default_args,
     description='MapReduce DAG using KubernetesPodOperator for FFmpeg transcoding.',
     schedule='@daily',
