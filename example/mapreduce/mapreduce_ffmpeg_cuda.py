@@ -31,56 +31,13 @@ OUTPUT_FILE_PATTERN = f'{SHARED_DIR}/dummy_480p_{{i}}.mp4'
 
 # Kubernetes Config
 NAMESPACE = 'airflow'
-FFMPEG_IMAGE = 'us.gcr.io/cloudkite-public/ffmpeg-cuda:latest'
+FFMPEG_IMAGE = 'ffmpeg:latest'
 
 # Common K8s configurations
-K8S_GPU_RESOURCES = k8s.V1ResourceRequirements(
-    requests={"nvidia.com/gpu": "1"},
-    limits={"nvidia.com/gpu": "1"}
-)
-
-K8S_CPU_RESOURCES = k8s.V1ResourceRequirements(
+K8S_RESOURCES = k8s.V1ResourceRequirements(
     requests={"cpu": "1"},
     limits={"cpu": "2"}
 )
-
-# Update the NVIDIA environment configuration
-K8S_NVIDIA_ENV = [
-    {
-        "name": "NVIDIA_VISIBLE_DEVICES",
-        "value": "all"
-    },
-    {
-        "name": "NVIDIA_DRIVER_CAPABILITIES",
-        "value": "compute,utility,video"
-    }
-]
-
-# Add security context configuration
-K8S_SECURITY_CONTEXT = {
-    "privileged": True,  # Required for GPU access
-    "capabilities": {
-        "add": ["SYS_ADMIN"]
-    }
-}
-
-# Add device mounts
-K8S_DEVICE_MOUNTS = [
-    k8s.V1VolumeMount(
-        name='nvidia-driver',
-        mount_path='/usr/local/nvidia',
-        read_only=True
-    )
-]
-
-K8S_DEVICE_VOLUMES = [
-    k8s.V1Volume(
-        name='nvidia-driver',
-        host_path=k8s.V1HostPathVolumeSource(
-            path='/usr/local/nvidia'
-        )
-    )
-]
 
 default_args = {
     'owner': 'data-engineering',
@@ -157,13 +114,13 @@ volume_mount = k8s.V1VolumeMount(
 # DAG DEFINITION
 # -------------------------------------------------------------
 with DAG(
-    dag_id='mapreduce_ffmpeg_cuda_k8s',
+    dag_id='mapreduce_ffmpeg_k8s',
     default_args=default_args,
-    description='MapReduce DAG using KubernetesPodOperator for FFmpeg CUDA transcoding.',
+    description='MapReduce DAG using KubernetesPodOperator for FFmpeg transcoding.',
     schedule='@daily',
     catchup=False,
     max_active_tasks=128,  # or concurrency=128, depending on your Airflow version
-    tags=['map-reduce', 'ffmpeg', 'cuda', 'k8s'],
+    tags=['map-reduce', 'ffmpeg', 'k8s'],
 ) as dag:
 
     start = EmptyOperator(task_id='start')
@@ -180,29 +137,26 @@ with DAG(
             echo "Generating {NUM_FILES} dummy 720p MP4 files..." && \
             for i in $(seq 0 $(({NUM_FILES}-1))); do
                 ffmpeg -y -f lavfi -i color=c=red:s=1280x720:d=2 \
-                       -c:v h264_nvenc -preset fast \
+                       -c:v libx264 -preset ultrafast \
                        {SHARED_DIR}/dummy_720p_$i.mp4;
             done && \
             echo "Done generating dummy files."
         """],
-        volumes=[volume] + K8S_DEVICE_VOLUMES,
-        volume_mounts=[volume_mount] + K8S_DEVICE_MOUNTS,
-        container_resources=K8S_GPU_RESOURCES,
-        env_vars=K8S_NVIDIA_ENV,  # Changed from env to env_vars
+        volumes=[volume],
+        volume_mounts=[volume_mount],
+        container_resources=K8S_RESOURCES,
         on_finish_action='delete_pod',
         in_cluster=True,
-        get_logs=True,
-        security_context=K8S_SECURITY_CONTEXT,
+        get_logs=True
     )
 
     # 2) TRANSCODE TASK GROUP (PARALLEL) USING KUBERNETESPODOPERATOR
-    #    We'll create a Pod for each file, requesting 1 GPU. Each Pod runs ffmpeg then ffprobe.
+    #    We'll create a Pod for each file. Each Pod runs ffmpeg then ffprobe.
 
     def build_transcode_k8s_operator(i: int) -> KubernetesPodOperator:
         """
         Returns a KubernetesPodOperator that:
-         - pulls a CUDA-enabled ffmpeg image
-         - uses 1 GPU
+         - pulls an ffmpeg image
          - reads from dummy_720p_{i}.mp4, writes dummy_480p_{i}.mp4
          - runs ffprobe to get frames
          - pushes logs to XCom
@@ -211,7 +165,8 @@ with DAG(
         output_file = OUTPUT_FILE_PATTERN.format(i=i)
 
         ffmpeg_cmd = f"""
-          ffmpeg -y -hwaccel cuda -i {input_file} \
+          ffmpeg -y -i {input_file} \
+                 -c:v libx264 -preset ultrafast \
                  -vf scale=854:480 \
                  {output_file} && \
           ffprobe -v error -count_frames -select_streams v:0 \
@@ -227,15 +182,13 @@ with DAG(
             image=FFMPEG_IMAGE,
             cmds=["bash", "-cx"],
             arguments=[ffmpeg_cmd],
-            container_resources=K8S_GPU_RESOURCES,
-            env_vars=K8S_NVIDIA_ENV,  # Changed from env to env_vars
-            volumes=[volume] + K8S_DEVICE_VOLUMES,
-            volume_mounts=[volume_mount] + K8S_DEVICE_MOUNTS,
+            container_resources=K8S_RESOURCES,
+            volumes=[volume],
+            volume_mounts=[volume_mount],
             get_logs=True,
             do_xcom_push=True,
             on_finish_action='delete_pod',
-            in_cluster=True,
-            security_context=K8S_SECURITY_CONTEXT,
+            in_cluster=True
         )
 
     # (B) Construct the parallel tasks in a TaskGroup
@@ -268,7 +221,7 @@ with DAG(
         """],
         volumes=[volume],
         volume_mounts=[volume_mount],
-        container_resources=K8S_CPU_RESOURCES,
+        container_resources=K8S_RESOURCES,
         on_finish_action='delete_pod',
         in_cluster=True,
         get_logs=True
