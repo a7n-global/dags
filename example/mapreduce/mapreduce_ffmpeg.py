@@ -202,8 +202,8 @@ with DAG(
         image=FFMPEG_IMAGE,
         cmds=['bash', '-cx'],
         arguments=[f"""
-            rm -f {SHARED_DIR}/dummy_*.mp4 || true
-            echo "Cleaned up temporary files"
+            rm -f {SHARED_DIR}/dummy_*.mp4 {SHARED_DIR}/result_*.txt || true
+            echo "Cleaned up temporary files and results"
         """],
         volumes=[volume],
         volume_mounts=[volume_mount],
