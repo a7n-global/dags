@@ -20,12 +20,29 @@ from kubernetes.client import models as k8s
 # -------------------------------------------------------------
 # CONFIG & CONSTANTS
 # -------------------------------------------------------------
+# File Processing
 NUM_FILES = 100
 NUM_FILES_MINUS_ONE = NUM_FILES - 1
+
+# Paths and Storage
 SHARED_DIR = '/opt/airflow/shared'
-FFMPEG_IMAGE = 'my-ffmpeg-cuda:latest'
 INPUT_FILE_PATTERN = f'{SHARED_DIR}/dummy_720p_{{i}}.mp4'
 OUTPUT_FILE_PATTERN = f'{SHARED_DIR}/dummy_480p_{{i}}.mp4'
+
+# Kubernetes Config
+NAMESPACE = 'airflow'
+FFMPEG_IMAGE = 'my-ffmpeg-cuda:latest'
+
+# Common K8s configurations
+K8S_GPU_RESOURCES = k8s.V1ResourceRequirements(
+    requests={"nvidia.com/gpu": "1"},
+    limits={"nvidia.com/gpu": "1"}
+)
+
+K8S_CPU_RESOURCES = k8s.V1ResourceRequirements(
+    requests={"cpu": "1"},
+    limits={"cpu": "2"}
+)
 
 default_args = {
     'owner': 'data-engineering',
@@ -82,6 +99,23 @@ def reduce_frames(**kwargs) -> Dict[str, int]:
 
 
 # -------------------------------------------------------------
+# VOLUME CONFIGURATION
+# -------------------------------------------------------------
+# Define volume & mount before tasks
+volume = k8s.V1Volume(
+    name='shared-volume',
+    host_path=k8s.V1HostPathVolumeSource(
+        path='/opt/airflow/shared'
+    )
+)
+volume_mount = k8s.V1VolumeMount(
+    name='shared-volume',
+    mount_path=SHARED_DIR,
+    read_only=False
+)
+
+
+# -------------------------------------------------------------
 # DAG DEFINITION
 # -------------------------------------------------------------
 with DAG(
@@ -96,40 +130,36 @@ with DAG(
 
     start = EmptyOperator(task_id='start')
 
-    # 1) GENERATE 100 DUMMY 720p FILES (BashOperator on Airflow worker)
-    #    Requires the worker environment to have ffmpeg installed,
-    #    or you can also do this generation in a KubernetesPodOperator if you prefer.
-    generate_720p_files = BashOperator(
+    # 1) GENERATE FILES using KubernetesPodOperator
+    generate_720p_files = KubernetesPodOperator(
         task_id='generate_720p_files',
-        bash_command=f"""
-        set -e
-        mkdir -p {SHARED_DIR}
-        echo "Generating {NUM_FILES} dummy 720p MP4 files in {SHARED_DIR}..."
-        for i in $(seq 0 $(({NUM_FILES}-1))); do
-          ffmpeg -y -f lavfi -i color=c=red:s=1280x720:d=2 \
-                 -vf "drawtext=fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf:text='File_$i':x=10:y=10:fontcolor=white:fontsize=24" \
-                 {SHARED_DIR}/dummy_720p_$i.mp4
-        done
-        echo "Done generating dummy files."
-        """
+        name='generate-720p-files',
+        namespace='airflow',
+        image=FFMPEG_IMAGE,
+        cmds=['bash', '-cx'],
+        arguments=[f"""
+            mkdir -p {SHARED_DIR} && \
+            echo "Generating {NUM_FILES} dummy 720p MP4 files..." && \
+            for i in $(seq 0 $(({NUM_FILES}-1))); do
+                ffmpeg -y -f lavfi -i color=c=red:s=1280x720:d=2 \
+                       -vf "drawtext=text='File_$i':x=10:y=10:fontcolor=white:fontsize=24" \
+                       {SHARED_DIR}/dummy_720p_$i.mp4;
+            done && \
+            echo "Done generating dummy files."
+        """],
+        volumes=[volume],
+        volume_mounts=[volume_mount],
+        container_resources=k8s.V1ResourceRequirements(
+            requests={"cpu": "1"},
+            limits={"cpu": "2"}
+        ),
+        on_finish_action='delete_pod',
+        in_cluster=True,
+        get_logs=True
     )
 
     # 2) TRANSCODE TASK GROUP (PARALLEL) USING KUBERNETESPODOPERATOR
     #    We'll create a Pod for each file, requesting 1 GPU. Each Pod runs ffmpeg then ffprobe.
-
-    # (A) Define the volume & volume mount for the shared directory (PVC).
-    #     Adjust the 'claimName' to match your K8s PersistentVolumeClaim.
-    volume = k8s.V1Volume(
-        name='shared-volume',
-        host_path=k8s.V1HostPathVolumeSource(
-            path='/opt/airflow/shared'
-        )
-    )
-    volume_mount = k8s.V1VolumeMount(
-        name='shared-volume',
-        mount_path=SHARED_DIR,
-        read_only=False
-    )
 
     def build_transcode_k8s_operator(i: int) -> KubernetesPodOperator:
         """
@@ -190,18 +220,27 @@ with DAG(
     )
 
     # 4) CLEANUP (OPTIONAL) - remove the dummy files afterwards
-    cleanup_files = BashOperator(
+    cleanup_files = KubernetesPodOperator(
         task_id='cleanup_files',
-        bash_command=f"""
-        if [ -d "{SHARED_DIR}" ]; then
-            rm -f {SHARED_DIR}/dummy_*.mp4
-            echo "Cleaned up temporary files"
-        else
-            echo "Directory {SHARED_DIR} not found"
-            exit 1
-        fi
-        """,
-        trigger_rule=TriggerRule.ALL_DONE
+        name='cleanup-files',
+        namespace=NAMESPACE,
+        image=FFMPEG_IMAGE,
+        cmds=['bash', '-cx'],
+        arguments=[f"""
+            if [ -d "{SHARED_DIR}" ]; then
+                rm -f {SHARED_DIR}/dummy_*.mp4
+                echo "Cleaned up temporary files"
+            else
+                echo "Directory {SHARED_DIR} not found"
+                exit 1
+            fi
+        """],
+        volumes=[volume],
+        volume_mounts=[volume_mount],
+        container_resources=K8S_CPU_RESOURCES,
+        on_finish_action='delete_pod',
+        in_cluster=True,
+        get_logs=True
     )
 
     end = EmptyOperator(task_id='end', trigger_rule=TriggerRule.ALL_DONE)
