@@ -44,6 +44,20 @@ K8S_CPU_RESOURCES = k8s.V1ResourceRequirements(
     limits={"cpu": "2"}
 )
 
+# Update the pod configuration
+K8S_POD_SPEC = k8s.V1PodSpec(
+    runtime_class_name='nvidia',  # Use NVIDIA runtime
+    containers=[
+        k8s.V1Container(
+            name="base",
+            env=[
+                k8s.V1EnvVar(name="NVIDIA_VISIBLE_DEVICES", value="all"),
+                k8s.V1EnvVar(name="NVIDIA_DRIVER_CAPABILITIES", value="compute,utility,video")
+            ]
+        )
+    ]
+)
+
 default_args = {
     'owner': 'data-engineering',
     'depends_on_past': False,
@@ -149,7 +163,8 @@ with DAG(
         """],
         volumes=[volume],
         volume_mounts=[volume_mount],
-        container_resources=K8S_GPU_RESOURCES,  # Changed to use GPU for encoding
+        container_resources=K8S_GPU_RESOURCES,
+        full_pod_spec=K8S_POD_SPEC,  # Changed from pod_template
         on_finish_action='delete_pod',
         in_cluster=True,
         get_logs=True
@@ -190,12 +205,8 @@ with DAG(
             image=FFMPEG_IMAGE,
             cmds=["bash", "-cx"],
             arguments=[ffmpeg_cmd],
-            # Changed from 'resources' to 'container_resources'
-            container_resources=k8s.V1ResourceRequirements(
-                requests={"nvidia.com/gpu": "1"},
-                limits={"nvidia.com/gpu": "1"}
-            ),
-            # Volume mounting so we can read/write from /opt/airflow/shared
+            container_resources=K8S_GPU_RESOURCES,
+            full_pod_spec=K8S_POD_SPEC,  # Changed from pod_template
             volumes=[volume],
             volume_mounts=[volume_mount],
             get_logs=True,        # capture pod logs
