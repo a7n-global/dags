@@ -94,7 +94,7 @@ def reduce_frames(**kwargs) -> Dict[str, int]:
         namespace=NAMESPACE,
         image='python:3.9-slim',
         cmds=["python"],
-        arguments=["/opt/airflow/dags/repo/example/mapreduce/mapreduce_utils.py",
+        arguments=["/opt/airflow/dags/repo/example/mapreduce/mapreduce_ffmpeg_utils.py",
                   SHARED_DIR, 
                   str(NUM_FILES)],
         volumes=[volume, dags_volume],
