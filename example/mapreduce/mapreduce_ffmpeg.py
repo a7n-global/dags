@@ -30,7 +30,9 @@ K8S_RESOURCES = k8s.V1ResourceRequirements(
 # Volume configuration
 volume = k8s.V1Volume(
     name='shared-volume',
-    host_path=k8s.V1HostPathVolumeSource(path='/opt/airflow/shared')
+    persistent_volume_claim=k8s.V1PersistentVolumeClaimVolumeSource(
+        claim_name='airflow-shared'  # Using your existing PVC
+    )
 )
 volume_mount = k8s.V1VolumeMount(
     name='shared-volume',
