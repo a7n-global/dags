@@ -84,38 +84,6 @@ def build_transcode_k8s_operator(i: int) -> KubernetesPodOperator:
         in_cluster=True
     )
 
-def reduce_frames(**kwargs) -> Dict[str, int]:
-    """Aggregate frame counts from result files."""
-    logger = logging.getLogger(__name__)
-    
-    pod = KubernetesPodOperator(
-        task_id='sum_frames',
-        name='sum-frames',
-        namespace=NAMESPACE,
-        image='python:3.9-slim',
-        cmds=["python"],
-        arguments=["/opt/airflow/dags/repo/example/mapreduce/mapreduce_ffmpeg_utils.py",
-                  SHARED_DIR, 
-                  str(NUM_FILES)],
-        volumes=[volume, dags_volume],
-        volume_mounts=[volume_mount, dags_volume_mount],
-        container_resources=K8S_RESOURCES,
-        get_logs=True,
-        do_xcom_push=False,  # No need for XCom
-        on_finish_action='delete_pod',
-        in_cluster=True,
-        startup_timeout_seconds=300,
-        image_pull_policy='IfNotPresent'
-    )
-    
-    # Execute the pod
-    try:
-        pod.execute(context=kwargs)
-        return {'status': 'success'}
-    except Exception as e:
-        logger.error(f"Pod execution failed: {str(e)}")
-        raise
-
 with DAG(
     dag_id='mapreduce_ffmpeg_cpu',
     default_args={
@@ -188,9 +156,19 @@ with DAG(
             build_transcode_k8s_operator(i)
     
     # Reduce task
-    reduce_task = PythonOperator(
-        task_id='reduce_frames',
-        python_callable=reduce_frames,
+    reduce_task = KubernetesPodOperator(
+        task_id='reduce_frames_pod',
+        name='reduce-frames',
+        namespace=NAMESPACE,
+        image='python:3.9-slim',
+        cmds=["python"],
+        arguments=["/opt/airflow/dags/repo/example/mapreduce/mapreduce_utils.py", SHARED_DIR, str(NUM_FILES)],
+        volumes=[volume, dags_volume],
+        volume_mounts=[volume_mount, dags_volume_mount],
+        container_resources=K8S_RESOURCES,
+        get_logs=True,
+        on_finish_action='delete_pod',
+        in_cluster=True,
         trigger_rule=TriggerRule.ALL_DONE
     )
     
