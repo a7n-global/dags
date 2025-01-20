@@ -31,13 +31,26 @@ K8S_RESOURCES = k8s.V1ResourceRequirements(
 volume = k8s.V1Volume(
     name='shared-volume',
     persistent_volume_claim=k8s.V1PersistentVolumeClaimVolumeSource(
-        claim_name='airflow-shared'  # Using your existing PVC
+        claim_name='airflow-shared'
     )
 )
 volume_mount = k8s.V1VolumeMount(
     name='shared-volume',
     mount_path=SHARED_DIR,
     read_only=False
+)
+
+# DAGs volume configuration
+dags_volume = k8s.V1Volume(
+    name='dags',
+    persistent_volume_claim=k8s.V1PersistentVolumeClaimVolumeSource(
+        claim_name='airflow-dags'
+    )
+)
+dags_volume_mount = k8s.V1VolumeMount(
+    name='dags',
+    mount_path='/opt/airflow/dags',
+    read_only=True
 )
 
 def build_transcode_k8s_operator(i: int) -> KubernetesPodOperator:
@@ -75,19 +88,17 @@ def reduce_frames(**kwargs) -> Dict[str, int]:
     """Aggregate frame counts from result files."""
     logger = logging.getLogger(__name__)
     
-    # Create a pod to read and sum all result files
     pod = KubernetesPodOperator(
         task_id='sum_frames',
         name='sum-frames',
         namespace=NAMESPACE,
         image='python:3.9-slim',
         cmds=["python"],
-        # The utils script is mounted from the repo
-        arguments=["/opt/airflow/dags/repo/example/mapreduce/mapreduce_utils.py", 
+        arguments=["/opt/airflow/dags/repo/example/mapreduce/mapreduce_utils.py",
                   SHARED_DIR, 
                   str(NUM_FILES)],
-        volumes=[volume],
-        volume_mounts=[volume_mount],
+        volumes=[volume, dags_volume],
+        volume_mounts=[volume_mount, dags_volume_mount],
         container_resources=K8S_RESOURCES,
         get_logs=True,
         do_xcom_push=True,
