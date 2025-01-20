@@ -110,6 +110,29 @@ with DAG(
         get_logs=True
     )
     
+    # Add verification task
+    verify_files = KubernetesPodOperator(
+        task_id='verify_files',
+        name='verify-files',
+        namespace=NAMESPACE,
+        image=FFMPEG_IMAGE,
+        cmds=['bash', '-cx'],
+        arguments=[f"""
+            echo "Verifying files exist and are accessible..." && \
+            for i in $(seq 0 $(({NUM_FILES}-1))); do
+                echo "Checking dummy_720p_$i.mp4..." && \
+                ls -l {SHARED_DIR}/dummy_720p_$i.mp4 && \
+                file {SHARED_DIR}/dummy_720p_$i.mp4
+            done
+        """],
+        volumes=[volume],
+        volume_mounts=[volume_mount],
+        container_resources=K8S_RESOURCES,
+        on_finish_action='delete_pod',
+        in_cluster=True,
+        get_logs=True
+    )
+    
     # Transcode files
     def build_transcode_k8s_operator(i: int) -> KubernetesPodOperator:
         return KubernetesPodOperator(
@@ -170,4 +193,4 @@ with DAG(
     end = EmptyOperator(task_id='end', trigger_rule=TriggerRule.ALL_DONE)
     
     # DAG Flow
-    start >> generate_720p_files >> transcode_group >> reduce_task >> cleanup_files >> end
+    start >> generate_720p_files >> verify_files >> transcode_group >> reduce_task >> cleanup_files >> end
