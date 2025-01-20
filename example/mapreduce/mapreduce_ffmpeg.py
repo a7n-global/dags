@@ -124,7 +124,7 @@ with DAG(
             for i in $(seq 0 $(({NUM_FILES}-1))); do
                 echo "Checking dummy_720p_$i.mp4..." && \
                 ls -l {SHARED_DIR}/dummy_720p_$i.mp4 && \
-                file {SHARED_DIR}/dummy_720p_$i.mp4
+                ffprobe -v error -show_format -show_streams {SHARED_DIR}/dummy_720p_$i.mp4
             done
         """],
         volumes=[volume],
