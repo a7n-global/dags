@@ -40,44 +40,69 @@ volume_mount = k8s.V1VolumeMount(
     read_only=False
 )
 
-def reduce_frames(**kwargs) -> Dict[str, int]:
-    """Aggregate frame counts from transcoding tasks."""
-    logger = logging.getLogger(__name__)
-    ti = kwargs['ti']
-    
-    total_frames = 0
-    failed_tasks = []
-    
-    for i in range(NUM_FILES):
-        try:
-            xcom_output = ti.xcom_pull(task_ids=f'transcode_group.transcode_{i}')
-            logger.info(f"Task {i} output: {xcom_output}")  # Debug log
+def build_transcode_k8s_operator(i: int) -> KubernetesPodOperator:
+    return KubernetesPodOperator(
+        task_id=f"transcode_{i}",
+        name=f"transcode-{i}",
+        namespace=NAMESPACE,
+        image=FFMPEG_IMAGE,
+        cmds=["bash", "-cx"],
+        arguments=[f"""
+            set -e
+            echo "Starting transcoding for file {i}..."
             
-            if xcom_output and isinstance(xcom_output, str):
-                # Look for the frame count in the output
-                for line in xcom_output.strip().splitlines():
-                    try:
-                        frame_count = int(line.strip())
-                        total_frames += frame_count
-                        logger.info(f"Task {i} processed {frame_count} frames")
-                        break
-                    except ValueError:
-                        continue
-                else:
-                    logger.error(f"No valid frame count found in task {i} output")
-                    failed_tasks.append(i)
-            else:
-                logger.error(f"No output from task {i}")
-                failed_tasks.append(i)
-        except Exception as e:
-            logger.error(f"Error processing task {i}: {str(e)}")
-            failed_tasks.append(i)
+            # Transcode
+            ffmpeg -y -i {INPUT_FILE_PATTERN.format(i=i)} \
+                   -c:v libx264 -preset ultrafast \
+                   -vf scale=854:480 \
+                   {OUTPUT_FILE_PATTERN.format(i=i)}
+            
+            # Count frames and save to result file
+            ffprobe -v error -count_frames -select_streams v:0 \
+                    -show_entries stream=nb_read_frames \
+                    -of default=nokey=1:noprint_wrappers=1 \
+                    {OUTPUT_FILE_PATTERN.format(i=i)} > {SHARED_DIR}/result_{i}.txt
+        """],
+        volumes=[volume],
+        volume_mounts=[volume_mount],
+        container_resources=K8S_RESOURCES,
+        get_logs=True,
+        on_finish_action='delete_pod',
+        in_cluster=True
+    )
+
+def reduce_frames(**kwargs) -> Dict[str, int]:
+    """Aggregate frame counts from result files."""
+    logger = logging.getLogger(__name__)
     
-    if failed_tasks:
-        error_msg = f"Failed tasks: {failed_tasks}"
-        logger.error(error_msg)
-        raise AirflowException(error_msg)
+    # Create a pod to read and sum all result files
+    pod = KubernetesPodOperator(
+        task_id='sum_frames',
+        name='sum-frames',
+        namespace=NAMESPACE,
+        image='python:3.9-slim',
+        cmds=["python"],
+        # The utils script is mounted from the repo
+        arguments=["/opt/airflow/dags/repo/example/mapreduce/mapreduce_utils.py", 
+                  SHARED_DIR, 
+                  str(NUM_FILES)],
+        volumes=[volume],
+        volume_mounts=[volume_mount],
+        container_resources=K8S_RESOURCES,
+        get_logs=True,
+        do_xcom_push=True,
+        on_finish_action='delete_pod',
+        in_cluster=True
+    )
     
+    # Execute the pod
+    result = pod.execute(context=kwargs)
+    
+    # Parse the result
+    if 'TOTAL_FRAMES=' not in result:
+        raise AirflowException("Failed to get total frames")
+    
+    total_frames = int(result.split('TOTAL_FRAMES=')[1].strip())
     logger.info(f"Successfully processed total frames: {total_frames}")
     return {'total_frames': total_frames}
 
@@ -148,58 +173,6 @@ with DAG(
     )
     
     # Transcode files
-    def build_transcode_k8s_operator(i: int) -> KubernetesPodOperator:
-        return KubernetesPodOperator(
-            task_id=f"transcode_{i}",
-            name=f"transcode-{i}",
-            namespace=NAMESPACE,
-            image=FFMPEG_IMAGE,
-            cmds=["bash", "-cx"],
-            arguments=[f"""
-                set -e
-                echo "Starting transcoding for file {i}..."
-                
-                # Check input file exists
-                if [ ! -f {INPUT_FILE_PATTERN.format(i=i)} ]; then
-                    echo "Input file not found!"
-                    exit 1
-                fi
-                
-                # Transcode
-                ffmpeg -y -i {INPUT_FILE_PATTERN.format(i=i)} \
-                       -c:v libx264 -preset ultrafast \
-                       -vf scale=854:480 \
-                       {OUTPUT_FILE_PATTERN.format(i=i)}
-                
-                # Verify output exists
-                if [ ! -f {OUTPUT_FILE_PATTERN.format(i=i)} ]; then
-                    echo "Output file not created!"
-                    exit 1
-                fi
-                
-                # Count frames and ensure we get a number
-                frames=$(ffprobe -v error -count_frames -select_streams v:0 \
-                        -show_entries stream=nb_read_frames \
-                        -of default=nokey=1:noprint_wrappers=1 \
-                        {OUTPUT_FILE_PATTERN.format(i=i)})
-                
-                if ! [[ "$frames" =~ ^[0-9]+$ ]]; then
-                    echo "Invalid frame count: $frames"
-                    exit 1
-                fi
-                
-                # Output only the frame count for XCom
-                echo "$frames"
-            """],
-            volumes=[volume],
-            volume_mounts=[volume_mount],
-            container_resources=K8S_RESOURCES,
-            get_logs=True,
-            do_xcom_push=True,
-            on_finish_action='delete_pod',
-            in_cluster=True
-        )
-    
     with TaskGroup(group_id='transcode_group') as transcode_group:
         for i in range(NUM_FILES):
             build_transcode_k8s_operator(i)
