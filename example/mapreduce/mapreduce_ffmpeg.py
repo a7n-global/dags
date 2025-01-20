@@ -51,22 +51,34 @@ def reduce_frames(**kwargs) -> Dict[str, int]:
     for i in range(NUM_FILES):
         try:
             xcom_output = ti.xcom_pull(task_ids=f'transcode_group.transcode_{i}')
+            logger.info(f"Task {i} output: {xcom_output}")  # Debug log
+            
             if xcom_output and isinstance(xcom_output, str):
-                lines = xcom_output.strip().splitlines()
-                if lines:
-                    frame_count = int(lines[-1])
-                    total_frames += frame_count
+                # Look for the frame count in the output
+                for line in xcom_output.strip().splitlines():
+                    try:
+                        frame_count = int(line.strip())
+                        total_frames += frame_count
+                        logger.info(f"Task {i} processed {frame_count} frames")
+                        break
+                    except ValueError:
+                        continue
                 else:
+                    logger.error(f"No valid frame count found in task {i} output")
                     failed_tasks.append(i)
             else:
+                logger.error(f"No output from task {i}")
                 failed_tasks.append(i)
         except Exception as e:
             logger.error(f"Error processing task {i}: {str(e)}")
             failed_tasks.append(i)
     
     if failed_tasks:
-        raise AirflowException(f"Failed tasks: {failed_tasks}")
+        error_msg = f"Failed tasks: {failed_tasks}"
+        logger.error(error_msg)
+        raise AirflowException(error_msg)
     
+    logger.info(f"Successfully processed total frames: {total_frames}")
     return {'total_frames': total_frames}
 
 with DAG(
@@ -144,10 +156,13 @@ with DAG(
             image=FFMPEG_IMAGE,
             cmds=["bash", "-cx"],
             arguments=[f"""
+                set -e
+                echo "Starting transcoding for file {i}..."
                 ffmpeg -y -i {INPUT_FILE_PATTERN.format(i=i)} \
                        -c:v libx264 -preset ultrafast \
                        -vf scale=854:480 \
                        {OUTPUT_FILE_PATTERN.format(i=i)} && \
+                echo "Transcoding complete, counting frames..."
                 ffprobe -v error -count_frames -select_streams v:0 \
                         -show_entries stream=nb_read_frames \
                         -of default=nokey=1:noprint_wrappers=1 \
