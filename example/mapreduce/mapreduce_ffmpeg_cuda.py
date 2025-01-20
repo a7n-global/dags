@@ -44,19 +44,17 @@ K8S_CPU_RESOURCES = k8s.V1ResourceRequirements(
     limits={"cpu": "2"}
 )
 
-# Update the pod configuration
-K8S_POD_SPEC = k8s.V1PodSpec(
-    runtime_class_name='nvidia',  # Use NVIDIA runtime
-    containers=[
-        k8s.V1Container(
-            name="base",
-            env=[
-                k8s.V1EnvVar(name="NVIDIA_VISIBLE_DEVICES", value="all"),
-                k8s.V1EnvVar(name="NVIDIA_DRIVER_CAPABILITIES", value="compute,utility,video")
-            ]
-        )
-    ]
-)
+# Update the NVIDIA environment configuration
+K8S_NVIDIA_ENV = [
+    {
+        "name": "NVIDIA_VISIBLE_DEVICES",
+        "value": "all"
+    },
+    {
+        "name": "NVIDIA_DRIVER_CAPABILITIES",
+        "value": "compute,utility,video"
+    }
+]
 
 default_args = {
     'owner': 'data-engineering',
@@ -164,7 +162,7 @@ with DAG(
         volumes=[volume],
         volume_mounts=[volume_mount],
         container_resources=K8S_GPU_RESOURCES,
-        full_pod_spec=K8S_POD_SPEC,  # Changed from pod_template
+        env_vars=K8S_NVIDIA_ENV,  # Changed from env to env_vars
         on_finish_action='delete_pod',
         in_cluster=True,
         get_logs=True
@@ -185,9 +183,6 @@ with DAG(
         input_file = INPUT_FILE_PATTERN.format(i=i)
         output_file = OUTPUT_FILE_PATTERN.format(i=i)
 
-        # Each container runs a single command:
-        #   ffmpeg ... && ffprobe ...
-        # We'll store the entire stdout in XCom to parse the final line
         ffmpeg_cmd = f"""
           ffmpeg -y -hwaccel cuda -i {input_file} \
                  -vf scale=854:480 \
@@ -201,18 +196,18 @@ with DAG(
         return KubernetesPodOperator(
             task_id=f"transcode_{i}",
             name=f"transcode-{i}",
-            namespace="airflow",  # or your desired namespace
+            namespace="airflow",
             image=FFMPEG_IMAGE,
             cmds=["bash", "-cx"],
             arguments=[ffmpeg_cmd],
             container_resources=K8S_GPU_RESOURCES,
-            full_pod_spec=K8S_POD_SPEC,  # Changed from pod_template
+            env_vars=K8S_NVIDIA_ENV,  # Changed from env to env_vars
             volumes=[volume],
             volume_mounts=[volume_mount],
-            get_logs=True,        # capture pod logs
-            do_xcom_push=True,    # store logs in XCom so we can parse frames
-            on_finish_action='delete_pod',  # Changed from is_delete_operator_pod
-            in_cluster=True,      # typically True if your Airflow is inside the cluster
+            get_logs=True,
+            do_xcom_push=True,
+            on_finish_action='delete_pod',
+            in_cluster=True,
         )
 
     # (B) Construct the parallel tasks in a TaskGroup
