@@ -66,9 +66,8 @@ def build_human_detection_operator(i: int) -> KubernetesPodOperator:
         cmds=["bash", "-c"],
         arguments=[f"""
             pip install --upgrade pip && \
-            pip install 'huggingface-hub==0.16.4' && \
-            pip install 'transformers==4.35.0' && \
-            pip install 'diffusers==0.24.0' && \
+            pip install 'huggingface-hub==0.19.4' && \
+            pip install 'diffusers==0.21.4' 'transformers==4.33.2' && \
             pip install opencv-python-headless && \
             python3 /opt/airflow/dags/repo/example/mapreduce/mapreduce_video_utils.py detect {INPUT_FILE_PATTERN.format(i=i)} {OUTPUT_FILE_PATTERN.format(i=i)}
         """],
@@ -118,9 +117,8 @@ with DAG(
         cmds=["bash", "-c"],
         arguments=[f"""
             pip install --upgrade pip && \
-            pip install 'huggingface-hub==0.16.4' && \
-            pip install 'transformers==4.35.0' && \
-            pip install 'diffusers==0.24.0' && \
+            pip install 'huggingface-hub==0.19.4' && \
+            pip install 'diffusers==0.21.4' 'transformers==4.33.2' && \
             pip install opencv-python-headless && \
             python3 /opt/airflow/dags/repo/example/mapreduce/mapreduce_video_utils.py generate {NUM_FILES} {INPUT_FILE_PATTERN}
         """],
