@@ -1,13 +1,9 @@
 from datetime import datetime, timedelta
-import logging
-from typing import Dict
 
 from airflow import DAG
-from airflow.operators.python import PythonOperator
 from airflow.operators.empty import EmptyOperator
 from airflow.utils.task_group import TaskGroup
 from airflow.utils.trigger_rule import TriggerRule
-from airflow.exceptions import AirflowException
 from airflow.providers.cncf.kubernetes.operators.kubernetes_pod import KubernetesPodOperator
 from kubernetes.client import models as k8s
 
@@ -90,9 +86,8 @@ def build_transcode_k8s_operator(i: int) -> KubernetesPodOperator:
         get_logs=True,
         on_finish_action='delete_pod',
         in_cluster=True,
-        # Add node selector for GPU nodes
-        node_selector={"nvidia.com/gpu": "present"},
-        # Add tolerations if needed for GPU nodes
+        # Update node selector to match cluster's GPU label
+        node_selector={"nvidia.com/gpu.present": "true"},
         tolerations=[
             k8s.V1Toleration(
                 key="nvidia.com/gpu",
@@ -143,7 +138,7 @@ with DAG(
         on_finish_action='delete_pod',
         in_cluster=True,
         get_logs=True,
-        node_selector={"nvidia.com/gpu": "present"},
+        node_selector={"nvidia.com/gpu.present": "true"},
         tolerations=[
             k8s.V1Toleration(
                 key="nvidia.com/gpu",

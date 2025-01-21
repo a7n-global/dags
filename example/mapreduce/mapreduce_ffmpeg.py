@@ -1,13 +1,9 @@
 from datetime import datetime, timedelta
-import logging
-from typing import Dict
 
 from airflow import DAG
-from airflow.operators.python import PythonOperator
 from airflow.operators.empty import EmptyOperator
 from airflow.utils.task_group import TaskGroup
 from airflow.utils.trigger_rule import TriggerRule
-from airflow.exceptions import AirflowException
 from airflow.providers.cncf.kubernetes.operators.kubernetes_pod import KubernetesPodOperator
 from kubernetes.client import models as k8s
 
@@ -163,7 +159,8 @@ with DAG(
         image='python:3.9-slim',
         cmds=["python"],
         arguments=["/opt/airflow/dags/repo/example/mapreduce/mapreduce_ffmpeg_utils.py", 
-                   SHARED_DIR, str(NUM_FILES)],
+                   SHARED_DIR, 
+                   str(NUM_FILES)],
         volumes=[volume, dags_volume],
         volume_mounts=[volume_mount, dags_volume_mount],
         container_resources=K8S_RESOURCES,
