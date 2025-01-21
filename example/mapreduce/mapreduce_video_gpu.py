@@ -1,13 +1,9 @@
 from datetime import datetime, timedelta
-import logging
-from typing import Dict
 
 from airflow import DAG
-from airflow.operators.python import PythonOperator
 from airflow.operators.empty import EmptyOperator
 from airflow.utils.task_group import TaskGroup
 from airflow.utils.trigger_rule import TriggerRule
-from airflow.exceptions import AirflowException
 from airflow.providers.cncf.kubernetes.operators.kubernetes_pod import KubernetesPodOperator
 from kubernetes.client import models as k8s
 
@@ -89,7 +85,7 @@ def build_human_detection_operator(i: int) -> KubernetesPodOperator:
     )
 
 with DAG(
-    dag_id='mapreduce_video_gpu',
+    dag_id='mapreduce_diffusers_and_detector_gpu',
     default_args={
         'owner': 'airflow',
         'depends_on_past': False,
