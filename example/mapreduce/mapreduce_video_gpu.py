@@ -65,6 +65,7 @@ def build_human_detection_operator(i: int) -> KubernetesPodOperator:
         image=PYTORCH_GPU_IMAGE,
         cmds=["bash", "-c"],
         arguments=[f"""
+            export DEBIAN_FRONTEND=noninteractive && \
             apt-get update && \
             apt-get install -y python3-opencv && \
             pip install --upgrade pip && \
@@ -117,6 +118,7 @@ with DAG(
         image=PYTORCH_GPU_IMAGE,
         cmds=["bash", "-c"],
         arguments=[f"""
+            export DEBIAN_FRONTEND=noninteractive && \
             apt-get update && \
             apt-get install -y python3-opencv && \
             pip install --upgrade pip && \
