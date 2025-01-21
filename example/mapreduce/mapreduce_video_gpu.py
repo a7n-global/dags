@@ -15,7 +15,7 @@ OUTPUT_FILE_PATTERN = f'{SHARED_DIR}/result_{{i}}.txt'
 
 # Kubernetes Config
 NAMESPACE = 'airflow'
-PYTORCH_GPU_IMAGE = 'huggingface/transformers-pytorch-gpu:latest'
+PYTORCH_GPU_IMAGE = 'huggingface/transformers-pytorch-gpu:4.23.1'
 
 # Resource Configuration
 K8S_RESOURCES = k8s.V1ResourceRequirements(
