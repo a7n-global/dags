@@ -1,37 +1,41 @@
 from datetime import datetime, timedelta
+import logging
+from typing import Dict
 
 from airflow import DAG
+from airflow.operators.python import PythonOperator
 from airflow.operators.empty import EmptyOperator
 from airflow.utils.task_group import TaskGroup
 from airflow.utils.trigger_rule import TriggerRule
+from airflow.exceptions import AirflowException
 from airflow.providers.cncf.kubernetes.operators.kubernetes_pod import KubernetesPodOperator
 from kubernetes.client import models as k8s
 
 # Config & Constants
-NUM_FILES = 10  # Reduced from 100 for testing
+NUM_FILES = 10
 SHARED_DIR = '/opt/airflow/shared'
-INPUT_FILE_PATTERN = f'{SHARED_DIR}/dummy_720p_{{i}}.mp4'
-OUTPUT_FILE_PATTERN = f'{SHARED_DIR}/dummy_480p_{{i}}.mp4'
+INPUT_FILE_PATTERN = f'{SHARED_DIR}/generated_video_{{i}}.mp4'
+OUTPUT_FILE_PATTERN = f'{SHARED_DIR}/result_{{i}}.txt'
 
 # Kubernetes Config
 NAMESPACE = 'airflow'
-FFMPEG_GPU_IMAGE = 'jrottenberg/ffmpeg:6-nvidia'  # GPU-enabled FFmpeg image
+PYTORCH_GPU_IMAGE = 'pytorch/pytorch:2.1.2-cuda12.1-cudnn8-runtime'
 
-# Common K8s configurations with GPU resources
+# Resource Configuration
 K8S_RESOURCES = k8s.V1ResourceRequirements(
     requests={
-        "cpu": "100m",
-        "memory": "256Mi",
-        "nvidia.com/gpu": "1"  # Request 1 GPU
+        "cpu": "1000m",
+        "memory": "4Gi",
+        "nvidia.com/gpu": "1"
     },
     limits={
-        "cpu": "500m", 
-        "memory": "512Mi",
-        "nvidia.com/gpu": "1"  # Limit to 1 GPU
+        "cpu": "2000m",
+        "memory": "8Gi",
+        "nvidia.com/gpu": "1"
     }
 )
 
-# Volume configurations (same as CPU version)
+# Volume Configuration
 volume = k8s.V1Volume(
     name='shared-volume',
     persistent_volume_claim=k8s.V1PersistentVolumeClaimVolumeSource(
@@ -57,36 +61,23 @@ dags_volume_mount = k8s.V1VolumeMount(
     read_only=True
 )
 
-def build_transcode_k8s_operator(i: int) -> KubernetesPodOperator:
+def build_human_detection_operator(i: int) -> KubernetesPodOperator:
     return KubernetesPodOperator(
-        task_id=f"transcode_{i}",
-        name=f"transcode-{i}",
+        task_id=f"detect_humans_{i}",
+        name=f"detect-humans-{i}",
         namespace=NAMESPACE,
-        image=FFMPEG_GPU_IMAGE,
-        cmds=["bash", "-cx"],
-        arguments=[f"""
-            set -e
-            echo "Starting transcoding for file {i} using GPU..."
-            
-            # Transcode using GPU acceleration
-            ffmpeg -y -hwaccel cuda -hwaccel_output_format cuda -i {INPUT_FILE_PATTERN.format(i=i)} \
-                   -c:v h264_nvenc -preset p4 \
-                   -vf scale_cuda=854:480 \
-                   {OUTPUT_FILE_PATTERN.format(i=i)}
-            
-            # Count frames and save to result file
-            ffprobe -v error -count_frames -select_streams v:0 \
-                    -show_entries stream=nb_read_frames \
-                    -of default=nokey=1:noprint_wrappers=1 \
-                    {OUTPUT_FILE_PATTERN.format(i=i)} > {SHARED_DIR}/result_{i}.txt
-        """],
-        volumes=[volume],
-        volume_mounts=[volume_mount],
+        image=PYTORCH_GPU_IMAGE,
+        cmds=["bash", "-c"],
+        arguments=[f"pip install diffusers opencv-python-headless && python /opt/airflow/dags/repo/example/mapreduce/mapreduce_video_utils.py detect {INPUT_FILE_PATTERN.format(i=i)} {OUTPUT_FILE_PATTERN.format(i=i)}"],
+        volumes=[volume, dags_volume],
+        volume_mounts=[volume_mount, dags_volume_mount],
         container_resources=K8S_RESOURCES,
         get_logs=True,
+        do_xcom_push=False,
         on_finish_action='delete_pod',
         in_cluster=True,
-        # Update node selector to match cluster's GPU label
+        startup_timeout_seconds=300,
+        image_pull_policy='IfNotPresent',
         node_selector={"nvidia.com/gpu.present": "true"},
         tolerations=[
             k8s.V1Toleration(
@@ -98,7 +89,7 @@ def build_transcode_k8s_operator(i: int) -> KubernetesPodOperator:
     )
 
 with DAG(
-    dag_id='mapreduce_ffmpeg_gpu',  # Updated DAG ID
+    dag_id='mapreduce_video_gpu',
     default_args={
         'owner': 'airflow',
         'depends_on_past': False,
@@ -106,38 +97,32 @@ with DAG(
         'retries': 2,
         'retry_delay': timedelta(minutes=2),
     },
-    description='MapReduce DAG using KubernetesPodOperator for FFmpeg GPU transcoding',
+    description='MapReduce DAG using GPU for video generation and human detection',
     schedule='@daily',
     catchup=False,
     max_active_tasks=16,
-    tags=['map-reduce', 'ffmpeg', 'k8s', 'gpu'],
+    tags=['map-reduce', 'gpu', 'video', 'pytorch'],
 ) as dag:
     
     start = EmptyOperator(task_id='start')
     
-    # Generate files (no GPU needed for this)
-    generate_720p_files = KubernetesPodOperator(
-        task_id='generate_720p_files',
-        name='generate-720p-files',
+    # Generate videos using transformer model
+    generate_videos = KubernetesPodOperator(
+        task_id='generate_videos',
+        name='generate-videos',
         namespace=NAMESPACE,
-        image=FFMPEG_GPU_IMAGE,  # Using GPU image but not using GPU features
-        cmds=['bash', '-cx'],
-        arguments=[f"""
-            mkdir -p {SHARED_DIR} && \
-            echo "Generating {NUM_FILES} dummy 720p MP4 files..." && \
-            for i in $(seq 0 $(({NUM_FILES}-1))); do
-                ffmpeg -y -f lavfi -i color=c=red:s=1280x720:d=2 \
-                       -c:v h264_nvenc -preset p4 \
-                       {SHARED_DIR}/dummy_720p_$i.mp4;
-            done && \
-            echo "Done generating dummy files."
-        """],
-        volumes=[volume],
-        volume_mounts=[volume_mount],
+        image=PYTORCH_GPU_IMAGE,
+        cmds=["bash", "-c"],
+        arguments=[f"pip install diffusers opencv-python-headless && python /opt/airflow/dags/repo/example/mapreduce/mapreduce_video_utils.py generate {NUM_FILES} {INPUT_FILE_PATTERN}"],
+        volumes=[volume, dags_volume],
+        volume_mounts=[volume_mount, dags_volume_mount],
         container_resources=K8S_RESOURCES,
+        get_logs=True,
+        do_xcom_push=False,
         on_finish_action='delete_pod',
         in_cluster=True,
-        get_logs=True,
+        startup_timeout_seconds=300,
+        image_pull_policy='IfNotPresent',
         node_selector={"nvidia.com/gpu.present": "true"},
         tolerations=[
             k8s.V1Toleration(
@@ -148,52 +133,52 @@ with DAG(
         ]
     )
     
-    # Verify files (no GPU needed)
+    # Verify generated files
     verify_files = KubernetesPodOperator(
         task_id='verify_files',
         name='verify-files',
         namespace=NAMESPACE,
-        image=FFMPEG_GPU_IMAGE,
+        image=PYTORCH_GPU_IMAGE,
         cmds=['bash', '-cx'],
         arguments=[f"""
-            echo "Verifying files exist and are accessible..." && \
+            echo "Verifying video files exist and are accessible..." && \
             for i in $(seq 0 $(({NUM_FILES}-1))); do
-                echo "Checking dummy_720p_$i.mp4..." && \
-                ls -l {SHARED_DIR}/dummy_720p_$i.mp4 && \
-                ffprobe -v error -show_format -show_streams {SHARED_DIR}/dummy_720p_$i.mp4
+                echo "Checking generated_video_$i.mp4..." && \
+                ls -l {SHARED_DIR}/generated_video_$i.mp4
             done
         """],
         volumes=[volume],
         volume_mounts=[volume_mount],
         container_resources=k8s.V1ResourceRequirements(  # No GPU needed for verification
             requests={"cpu": "100m", "memory": "256Mi"},
-            limits={"cpu": "500m", "memory": "512Mi"}
+            limits={"cpu": "200m", "memory": "512Mi"}
         ),
+        get_logs=True,
+        do_xcom_push=False,
         on_finish_action='delete_pod',
-        in_cluster=True,
-        get_logs=True
+        in_cluster=True
     )
     
-    # Transcode files using GPU
-    with TaskGroup(group_id='transcode_group') as transcode_group:
+    # Human detection tasks
+    with TaskGroup(group_id='detect_humans_group') as detect_group:
         for i in range(NUM_FILES):
-            build_transcode_k8s_operator(i)
+            build_human_detection_operator(i)
     
-    # Reduce task (no GPU needed)
+    # Reduce task
     reduce_task = KubernetesPodOperator(
-        task_id='reduce_frames',
-        name='reduce-frames',
+        task_id='reduce_humans',
+        name='reduce-humans',
         namespace=NAMESPACE,
         image='python:3.9-slim',
         cmds=["python"],
-        arguments=["/opt/airflow/dags/repo/example/mapreduce/mapreduce_utils.py", 
-                  SHARED_DIR, 
+        arguments=["/opt/airflow/dags/repo/example/mapreduce/mapreduce_video_utils.py",
+                  SHARED_DIR,
                   str(NUM_FILES)],
         volumes=[volume, dags_volume],
         volume_mounts=[volume_mount, dags_volume_mount],
         container_resources=k8s.V1ResourceRequirements(  # No GPU needed for reduction
             requests={"cpu": "100m", "memory": "256Mi"},
-            limits={"cpu": "500m", "memory": "512Mi"}
+            limits={"cpu": "200m", "memory": "512Mi"}
         ),
         get_logs=True,
         do_xcom_push=False,
@@ -203,29 +188,30 @@ with DAG(
         image_pull_policy='IfNotPresent'
     )
     
-    # Cleanup (no GPU needed)
+    # Cleanup
     cleanup_files = KubernetesPodOperator(
         task_id='cleanup_files',
         name='cleanup-files',
         namespace=NAMESPACE,
-        image=FFMPEG_GPU_IMAGE,
+        image='python:3.9-slim',
         cmds=['bash', '-cx'],
         arguments=[f"""
-            rm -f {SHARED_DIR}/dummy_*.mp4 {SHARED_DIR}/result_*.txt || true
-            echo "Cleaned up temporary files and results"
+            rm -f {SHARED_DIR}/generated_video_*.mp4 {SHARED_DIR}/result_*.txt || true
+            echo "Cleaned up video files and results"
         """],
         volumes=[volume],
         volume_mounts=[volume_mount],
         container_resources=k8s.V1ResourceRequirements(  # No GPU needed for cleanup
             requests={"cpu": "100m", "memory": "256Mi"},
-            limits={"cpu": "500m", "memory": "512Mi"}
+            limits={"cpu": "200m", "memory": "512Mi"}
         ),
+        get_logs=True,
+        do_xcom_push=False,
         on_finish_action='delete_pod',
-        in_cluster=True,
-        get_logs=True
+        in_cluster=True
     )
     
     end = EmptyOperator(task_id='end', trigger_rule=TriggerRule.ALL_DONE)
     
     # DAG Flow
-    start >> generate_720p_files >> verify_files >> transcode_group >> reduce_task >> cleanup_files >> end 
+    start >> generate_videos >> verify_files >> detect_group >> reduce_task >> cleanup_files >> end 
