@@ -126,20 +126,10 @@ with DAG(
             pip install 'huggingface-hub==0.16.4' && \
             pip install 'diffusers==0.18.0' 'transformers==4.31.0' 'accelerate==0.21.0' && \
             
-            # Verify mount point and permissions
-            echo "Checking shared directory..." && \
-            ls -la {SHARED_DIR} && \
-            echo "Current working directory: $PWD" && \
+            # Change to shared directory
+            cd {SHARED_DIR} && \
             
-            # Try creating a test file
-            echo "Testing write permissions..." && \
-            touch {SHARED_DIR}/test.txt && \
-            
-            python3 /opt/airflow/dags/repo/example/mapreduce/mapreduce_video_utils.py generate {NUM_FILES} {INPUT_FILE_PATTERN} && \
-            
-            # Verify files after generation
-            echo "Checking generated files:" && \
-            ls -la {SHARED_DIR}/generated_video_*.mp4
+            python3 /opt/airflow/dags/repo/example/mapreduce/mapreduce_video_utils.py generate {NUM_FILES} {INPUT_FILE_PATTERN}
         """],
         volumes=[volume, dags_volume],
         volume_mounts=[volume_mount, dags_volume_mount],
