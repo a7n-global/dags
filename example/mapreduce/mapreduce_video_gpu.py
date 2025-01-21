@@ -15,7 +15,7 @@ OUTPUT_FILE_PATTERN = f'{SHARED_DIR}/result_{{i}}.txt'
 
 # Kubernetes Config
 NAMESPACE = 'airflow'
-PYTORCH_GPU_IMAGE = 'nvcr.io/nvidia/pytorch:22.12-py3'
+PYTORCH_GPU_IMAGE = 'nvcr.io/nvidia/pytorch:23.12-py3'
 
 # Resource Configuration
 K8S_RESOURCES = k8s.V1ResourceRequirements(
@@ -64,7 +64,7 @@ def build_human_detection_operator(i: int) -> KubernetesPodOperator:
         namespace=NAMESPACE,
         image=PYTORCH_GPU_IMAGE,
         cmds=["bash", "-c"],
-        arguments=[f"pip install diffusers transformers opencv-python-headless && python3 /opt/airflow/dags/repo/example/mapreduce/mapreduce_video_utils.py detect {INPUT_FILE_PATTERN.format(i=i)} {OUTPUT_FILE_PATTERN.format(i=i)}"],
+        arguments=[f"pip install 'diffusers==0.24.0' 'transformers==4.35.0' opencv-python-headless && python3 /opt/airflow/dags/repo/example/mapreduce/mapreduce_video_utils.py detect {INPUT_FILE_PATTERN.format(i=i)} {OUTPUT_FILE_PATTERN.format(i=i)}"],
         volumes=[volume, dags_volume],
         volume_mounts=[volume_mount, dags_volume_mount],
         container_resources=K8S_RESOURCES,
@@ -109,7 +109,7 @@ with DAG(
         namespace=NAMESPACE,
         image=PYTORCH_GPU_IMAGE,
         cmds=["bash", "-c"],
-        arguments=[f"pip install diffusers transformers opencv-python-headless && python3 /opt/airflow/dags/repo/example/mapreduce/mapreduce_video_utils.py generate {NUM_FILES} {INPUT_FILE_PATTERN}"],
+        arguments=[f"pip install 'diffusers==0.24.0' 'transformers==4.35.0' opencv-python-headless && python3 /opt/airflow/dags/repo/example/mapreduce/mapreduce_video_utils.py generate {NUM_FILES} {INPUT_FILE_PATTERN}"],
         volumes=[volume, dags_volume],
         volume_mounts=[volume_mount, dags_volume_mount],
         container_resources=K8S_RESOURCES,
