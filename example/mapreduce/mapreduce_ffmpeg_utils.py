@@ -1,6 +1,5 @@
 import logging
 from typing import Dict
-import glob
 import os
 
 def sum_frame_counts(shared_dir: str, num_files: int) -> Dict[str, int]:
