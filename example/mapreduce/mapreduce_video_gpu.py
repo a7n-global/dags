@@ -1,3 +1,4 @@
+# TODO: build a custom image with all the dependencies
 from datetime import datetime, timedelta
 
 from airflow import DAG
@@ -70,7 +71,7 @@ def build_human_detection_operator(i: int) -> KubernetesPodOperator:
             apt-get install -y python3-opencv && \
             pip install --upgrade pip && \
             pip install 'huggingface-hub==0.19.4' && \
-            pip install 'diffusers==0.21.4' 'transformers==4.33.2' && \
+            pip install 'diffusers==0.21.4' 'transformers==4.33.2' 'accelerate' && \
             python3 /opt/airflow/dags/repo/example/mapreduce/mapreduce_video_utils.py detect {INPUT_FILE_PATTERN.format(i=i)} {OUTPUT_FILE_PATTERN.format(i=i)}
         """],
         volumes=[volume, dags_volume],
@@ -123,7 +124,7 @@ with DAG(
             apt-get install -y python3-opencv && \
             pip install --upgrade pip && \
             pip install 'huggingface-hub==0.19.4' && \
-            pip install 'diffusers==0.21.4' 'transformers==4.33.2' && \
+            pip install 'diffusers==0.21.4' 'transformers==4.33.2' 'accelerate' && \
             python3 /opt/airflow/dags/repo/example/mapreduce/mapreduce_video_utils.py generate {NUM_FILES} {INPUT_FILE_PATTERN}
         """],
         volumes=[volume, dags_volume],
