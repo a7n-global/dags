@@ -72,7 +72,7 @@ def build_human_detection_operator(i: int) -> KubernetesPodOperator:
         do_xcom_push=False,
         on_finish_action='delete_pod',
         in_cluster=True,
-        startup_timeout_seconds=300,
+        startup_timeout_seconds=600,
         image_pull_policy='IfNotPresent',
         node_selector={"nvidia.com/gpu.present": "true"},
         tolerations=[
@@ -117,7 +117,7 @@ with DAG(
         do_xcom_push=False,
         on_finish_action='delete_pod',
         in_cluster=True,
-        startup_timeout_seconds=300,
+        startup_timeout_seconds=600,
         image_pull_policy='IfNotPresent',
         node_selector={"nvidia.com/gpu.present": "true"},
         tolerations=[
