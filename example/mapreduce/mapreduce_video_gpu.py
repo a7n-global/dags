@@ -190,13 +190,13 @@ with DAG(
         task_id='reduce_results',
         name='reduce-results',
         namespace=NAMESPACE,
-        image='python:3.9-slim',  # Lightweight Python image
+        image='python:3.9-slim',
         cmds=["python3"],
         arguments=["/opt/airflow/dags/repo/example/mapreduce/mapreduce_reduce_utils.py",
                   SHARED_DIR,
                   str(NUM_FILES)],
-        volumes=[volume],
-        volume_mounts=[volume_mount],
+        volumes=[volume, dags_volume],
+        volume_mounts=[volume_mount, dags_volume_mount],
         container_resources=k8s.V1ResourceRequirements(
             requests={"cpu": "100m", "memory": "128Mi"},
             limits={"cpu": "200m", "memory": "256Mi"}
