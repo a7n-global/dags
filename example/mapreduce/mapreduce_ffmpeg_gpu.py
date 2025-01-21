@@ -15,7 +15,7 @@ OUTPUT_FILE_PATTERN = f'{SHARED_DIR}/dummy_480p_{{i}}.mp4'
 
 # Kubernetes Config
 NAMESPACE = 'airflow'
-FFMPEG_GPU_IMAGE = 'jrottenberg/ffmpeg:7-nvidia'  # GPU-enabled FFmpeg image
+FFMPEG_GPU_IMAGE = 'jrottenberg/ffmpeg:6-nvidia'  # GPU-enabled FFmpeg image
 
 # Common K8s configurations with GPU resources
 K8S_RESOURCES = k8s.V1ResourceRequirements(
