@@ -146,19 +146,21 @@ with DAG(
         ]
     )
     
-    # Verify generated files
+    # Verify files task
     verify_files = KubernetesPodOperator(
         task_id='verify_files',
         name='verify-files',
         namespace=NAMESPACE,
-        image=PYTORCH_GPU_IMAGE,
+        image='python:3.9-slim',  # Lightweight Python image
         cmds=['bash', '-cx'],
         arguments=[f"""
-            echo "Verifying video files exist and are accessible..." && \
-            for i in $(seq 0 $(({NUM_FILES}-1))); do
-                echo "Checking generated_video_$i.mp4..." && \
-                ls -l {SHARED_DIR}/generated_video_$i.mp4
+            for i in $(seq 0 $((NUM_FILES-1))); do
+                if [ ! -f {INPUT_FILE_PATTERN.format(i='$i')} ]; then
+                    echo "Missing file: {INPUT_FILE_PATTERN.format(i='$i')}"
+                    exit 1
+                fi
             done
+            echo "All files present"
         """],
         volumes=[volume],
         volume_mounts=[volume_mount],
@@ -179,19 +181,19 @@ with DAG(
     
     # Reduce task
     reduce_task = KubernetesPodOperator(
-        task_id='reduce_humans',
-        name='reduce-humans',
+        task_id='reduce_results',
+        name='reduce-results',
         namespace=NAMESPACE,
-        image='python:3.9-slim',
-        cmds=["python"],
-        arguments=["/opt/airflow/dags/repo/example/mapreduce/mapreduce_video_utils.py",
+        image='python:3.9-slim',  # Lightweight Python image
+        cmds=["python3"],
+        arguments=["/opt/airflow/dags/repo/example/mapreduce/mapreduce_reduce_utils.py",
                   SHARED_DIR,
                   str(NUM_FILES)],
-        volumes=[volume, dags_volume],
-        volume_mounts=[volume_mount, dags_volume_mount],
-        container_resources=k8s.V1ResourceRequirements(  # No GPU needed for reduction
-            requests={"cpu": "100m", "memory": "256Mi"},
-            limits={"cpu": "200m", "memory": "512Mi"}
+        volumes=[volume],
+        volume_mounts=[volume_mount],
+        container_resources=k8s.V1ResourceRequirements(
+            requests={"cpu": "100m", "memory": "128Mi"},
+            limits={"cpu": "200m", "memory": "256Mi"}
         ),
         get_logs=True,
         do_xcom_push=False,

@@ -6,6 +6,11 @@ from diffusers import DiffusionPipeline
 import cv2
 from torchvision.models import resnet50
 
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+
 def generate_video(output_path: str, duration_sec: int = 2) -> None:
     """Generate a short video using Stable Diffusion."""
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -93,8 +98,19 @@ def sum_human_counts(shared_dir: str, num_files: int) -> Dict[str, int]:
 
 def batch_generate_videos(num_files: int, output_pattern: str) -> None:
     """Generate multiple videos using the pattern."""
+    logger = logging.getLogger(__name__)
+    logger.info(f"Starting generation of {num_files} videos")
+    
     for i in range(num_files):
-        generate_video(output_pattern.format(i=i))
+        logger.info(f"Generating video {i}/{num_files}")
+        try:
+            generate_video(output_pattern.format(i=i))
+            logger.info(f"Successfully generated video {i}")
+        except Exception as e:
+            logger.error(f"Failed to generate video {i}: {e}")
+            raise
+
+    logger.info("Completed all video generations")
 
 def process_single_video(input_path: str, output_path: str) -> None:
     """Process a single video and save human count."""
