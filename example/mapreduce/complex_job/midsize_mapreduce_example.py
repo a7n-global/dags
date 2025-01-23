@@ -1,10 +1,7 @@
 from datetime import datetime, timedelta
-import time
-import random
 
 from airflow import DAG
 from airflow.operators.empty import EmptyOperator
-from airflow.sensors.filesystem import FileSensor
 from airflow.utils.task_group import TaskGroup
 from airflow.utils.trigger_rule import TriggerRule
 from airflow.providers.cncf.kubernetes.operators.kubernetes_pod import KubernetesPodOperator
@@ -76,7 +73,7 @@ def build_mapper_operator(i: int) -> KubernetesPodOperator:
         image=BASE_IMAGE,
         cmds=["python3"],
         arguments=[
-            "/opt/airflow/dags/repo/example/mapreduce/example_lib/mapper_script.py", str(i)],
+            "/opt/airflow/dags/repo/example/mapreduce/complex_job/example_lib/mapper_script.py", str(i)],
         volumes=[volume, dags_volume],
         volume_mounts=[volume_mount, dags_volume_mount],
         container_resources=K8S_RESOURCES,
@@ -126,12 +123,12 @@ with DAG(
         image=BASE_IMAGE,
         cmds=["python3"],
         arguments=[
-            "/opt/airflow/dags/repo/example/mapreduce/example_lib/branch_script.py"],
+            "/opt/airflow/dags/repo/example/mapreduce/complex_job/example_lib/branch_script.py"],
         volumes=[volume, dags_volume],
         volume_mounts=[volume_mount, dags_volume_mount],
         container_resources=K8S_RESOURCES,
         get_logs=True,
-        do_xcom_push=True,
+        do_xcom_push=False,
         on_finish_action='delete_pod',
         in_cluster=True
     )
@@ -144,7 +141,7 @@ with DAG(
         image=BASE_IMAGE,
         cmds=["python3"],
         arguments=[
-            "/opt/airflow/dags/repo/example/mapreduce/example_lib/path_task.py", "big_data"],
+            "/opt/airflow/dags/repo/example/mapreduce/complex_job/example_lib/path_task.py", "big_data"],
         volumes=[volume, dags_volume],
         volume_mounts=[volume_mount, dags_volume_mount],
         container_resources=K8S_RESOURCES,
@@ -161,7 +158,7 @@ with DAG(
         image=BASE_IMAGE,
         cmds=["python3"],
         arguments=[
-            "/opt/airflow/dags/repo/example/mapreduce/example_lib/path_task.py", "small_data"],
+            "/opt/airflow/dags/repo/example/mapreduce/complex_job/example_lib/path_task.py", "small_data"],
         volumes=[volume, dags_volume],
         volume_mounts=[volume_mount, dags_volume_mount],
         container_resources=K8S_RESOURCES,
@@ -179,7 +176,7 @@ with DAG(
         image=BASE_IMAGE,
         cmds=["python3"],
         arguments=[
-            "/opt/airflow/dags/repo/example/mapreduce/example_lib/reduce_script.py"],
+            "/opt/airflow/dags/repo/example/mapreduce/complex_job/example_lib/reduce_task.py"],
         volumes=[volume, dags_volume],
         volume_mounts=[volume_mount, dags_volume_mount],
         container_resources=K8S_RESOURCES,
