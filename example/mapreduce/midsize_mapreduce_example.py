@@ -90,7 +90,7 @@ def build_mapper_operator(i: int) -> KubernetesPodOperator:
 with DAG(
     dag_id='midsize_mapreduce_example',
     default_args=default_args,
-    description='Map-reduce DAG for stress testing. Generates the file before waiting on it with FileSensor.',
+    description='Map-reduce DAG for stress testing. Generates the file before processing.',
     schedule='@daily',
     catchup=False,
     max_active_tasks=128,
@@ -111,17 +111,6 @@ with DAG(
         volumes=[volume],
         volume_mounts=[volume_mount],
         container_resources=K8S_RESOURCES,
-    )
-
-    # 3) SENSOR - wait for that newly created file to appear
-    wait_for_file = FileSensor(
-        task_id='wait_for_input_file',
-        # Must match what's created above
-        filepath='/opt/airflow/shared/big_input_dataset_ready.txt',
-        poke_interval=30,
-        timeout=60 * 60,
-        mode='poke',
-        fs_conn_id='fs_local',
     )
 
     # 4) MAP EXTRACTION GROUP - multiple parallel tasks
@@ -226,6 +215,6 @@ with DAG(
     )
 
     # DAG FLOW
-    start >> generate_file >> wait_for_file >> map_extraction_group
+    start >> generate_file >> map_extraction_group
     map_extraction_group >> branch_op >> [
         big_data_path, small_data_path] >> reduce_task >> cleanup_file >> end
