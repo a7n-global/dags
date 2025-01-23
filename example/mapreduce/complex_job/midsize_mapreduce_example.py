@@ -11,7 +11,7 @@ from kubernetes.client import models as k8s
 # ----------------------------------------------------------
 # CONFIGURE HOW MANY PARALLEL MAPPER TASKS YOU WANT
 # ----------------------------------------------------------
-NUM_MAPPERS = 50  # Increase or decrease to stress test more or less
+NUM_MAPPERS = 10  # Increase or decrease to stress test more or less
 
 # Default arguments for tasks
 default_args = {
