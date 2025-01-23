@@ -78,7 +78,7 @@ def build_mapper_operator(i: int) -> KubernetesPodOperator:
         volume_mounts=[volume_mount, dags_volume_mount],
         container_resources=K8S_RESOURCES,
         get_logs=True,
-        do_xcom_push=True,
+        do_xcom_push=False,
         on_finish_action='delete_pod',
         in_cluster=True
     )
@@ -146,7 +146,7 @@ with DAG(
         volume_mounts=[volume_mount, dags_volume_mount],
         container_resources=K8S_RESOURCES,
         get_logs=True,
-        do_xcom_push=True,
+        do_xcom_push=False,
         on_finish_action='delete_pod',
         in_cluster=True
     )
@@ -163,7 +163,7 @@ with DAG(
         volume_mounts=[volume_mount, dags_volume_mount],
         container_resources=K8S_RESOURCES,
         get_logs=True,
-        do_xcom_push=True,
+        do_xcom_push=False,
         on_finish_action='delete_pod',
         in_cluster=True
     )
@@ -181,7 +181,7 @@ with DAG(
         volume_mounts=[volume_mount, dags_volume_mount],
         container_resources=K8S_RESOURCES,
         get_logs=True,
-        do_xcom_push=True,
+        do_xcom_push=False,
         on_finish_action='delete_pod',
         in_cluster=True,
         trigger_rule=TriggerRule.NONE_FAILED
