@@ -4,11 +4,11 @@ import random
 
 from airflow import DAG
 from airflow.operators.empty import EmptyOperator
-from airflow.operators.bash import BashOperator
 from airflow.sensors.filesystem import FileSensor
 from airflow.utils.task_group import TaskGroup
-from airflow.operators.python import PythonOperator, BranchPythonOperator
 from airflow.utils.trigger_rule import TriggerRule
+from airflow.providers.cncf.kubernetes.operators.kubernetes_pod import KubernetesPodOperator
+from kubernetes.client import models as k8s
 
 
 # ----------------------------------------------------------
@@ -25,54 +25,67 @@ default_args = {
     'retry_delay': timedelta(minutes=5),
 }
 
-def dummy_mapper(mapper_id, **kwargs):
-    """Simulate some CPU or time usage in parallel."""
-    sleep_time = random.randint(5, 15)
-    print(f"Mapper {mapper_id} starting. Sleeping for {sleep_time} seconds...")
-    time.sleep(sleep_time)
-    # Return some dummy data for aggregator
-    rows_processed = random.randint(100, 1000)  # pretend to process 100-1000 rows
-    print(f"Mapper {mapper_id} finished, processed {rows_processed} rows.")
-    return {
-        'mapper_id': mapper_id,
-        'rows': rows_processed,
+# Add Kubernetes configurations
+NAMESPACE = 'airflow'
+BASE_IMAGE = 'python:3.9-slim'
+
+# Resource Configuration
+K8S_RESOURCES = k8s.V1ResourceRequirements(
+    requests={
+        "cpu": "100m",
+        "memory": "256Mi"
+    },
+    limits={
+        "cpu": "200m",
+        "memory": "512Mi"
     }
+)
 
-def decide_branch(**kwargs):
-    """Branch to 'big_data_path' if the total rows across all mappers > 20,000 else 'small_data_path'."""
-    ti = kwargs['ti']
-    total_rows = 0
-    for i in range(NUM_MAPPERS):
-        mapper_result = ti.xcom_pull(key='return_value', task_ids=f'map_extraction_group.mapper_{i}')
-        if mapper_result:
-            total_rows += mapper_result.get('rows', 0)
+# Volume Configuration
+volume = k8s.V1Volume(
+    name='shared-volume',
+    persistent_volume_claim=k8s.V1PersistentVolumeClaimVolumeSource(
+        claim_name='airflow-shared'
+    )
+)
+volume_mount = k8s.V1VolumeMount(
+    name='shared-volume',
+    mount_path='/opt/airflow/shared',
+    read_only=False
+)
 
-    print(f"Total rows from {NUM_MAPPERS} mappers = {total_rows}")
-    return 'big_data_path' if total_rows > 20000 else 'small_data_path'
+# Add DAGs volume configuration
+dags_volume = k8s.V1Volume(
+    name='dags',
+    persistent_volume_claim=k8s.V1PersistentVolumeClaimVolumeSource(
+        claim_name='airflow-dags'
+    )
+)
+dags_volume_mount = k8s.V1VolumeMount(
+    name='dags',
+    mount_path='/opt/airflow/dags',
+    read_only=True
+)
 
-def dummy_path_task(path_name, **kwargs):
-    """A dummy path task that also does random sleeping to simulate big/small path work."""
-    if path_name == 'big_data':
-        sleep_time = random.randint(10, 20)
-    else:
-        sleep_time = random.randint(3, 7)
-    print(f"{path_name} path task sleeping for {sleep_time} seconds...")
-    time.sleep(sleep_time)
-    print(f"{path_name} path task complete.")
 
-def reduce_aggregation(**kwargs):
-    """Combine mapper results in a final 'reduce' step."""
-    ti = kwargs['ti']
-    total_rows = 0
-    for i in range(NUM_MAPPERS):
-        mapper_result = ti.xcom_pull(key='return_value', task_ids=f'map_extraction_group.mapper_{i}')
-        if mapper_result:
-            total_rows += mapper_result.get('rows', 0)
+def build_mapper_operator(i: int) -> KubernetesPodOperator:
+    return KubernetesPodOperator(
+        task_id=f"mapper_{i}",
+        name=f"mapper-{i}",
+        namespace=NAMESPACE,
+        image=BASE_IMAGE,
+        cmds=["python3"],
+        arguments=[
+            "/opt/airflow/dags/repo/example/mapreduce/example_lib/mapper_script.py", str(i)],
+        volumes=[volume, dags_volume],
+        volume_mounts=[volume_mount, dags_volume_mount],
+        container_resources=K8S_RESOURCES,
+        get_logs=True,
+        do_xcom_push=True,
+        on_finish_action='delete_pod',
+        in_cluster=True
+    )
 
-    print(f"Reducer sees total_rows={total_rows} from all mappers.")
-    return {
-        'total_rows_processed': total_rows
-    }
 
 with DAG(
     dag_id='midsize_mapreduce_example',
@@ -88,15 +101,23 @@ with DAG(
     start = EmptyOperator(task_id='start')
 
     # 2) PRODUCE THE FILE
-    generate_file = BashOperator(
+    generate_file = KubernetesPodOperator(
         task_id='generate_input_file',
-        bash_command='touch /opt/airflow/shared/big_input_dataset_ready.txt && echo "Data is ready" > /opt/airflow/shared/big_input_dataset_ready.txt'
+        name='generate-input-file',
+        namespace=NAMESPACE,
+        image=BASE_IMAGE,
+        cmds=['bash', '-c'],
+        arguments=['touch /opt/airflow/shared/big_input_dataset_ready.txt && echo "Data is ready" > /opt/airflow/shared/big_input_dataset_ready.txt'],
+        volumes=[volume],
+        volume_mounts=[volume_mount],
+        container_resources=K8S_RESOURCES,
     )
 
     # 3) SENSOR - wait for that newly created file to appear
     wait_for_file = FileSensor(
         task_id='wait_for_input_file',
-        filepath='/opt/airflow/shared/big_input_dataset_ready.txt',  # Must match what's created above
+        # Must match what's created above
+        filepath='/opt/airflow/shared/big_input_dataset_ready.txt',
         poke_interval=30,
         timeout=60 * 60,
         mode='poke',
@@ -106,44 +127,96 @@ with DAG(
     # 4) MAP EXTRACTION GROUP - multiple parallel tasks
     with TaskGroup(group_id='map_extraction_group') as map_extraction_group:
         for i in range(NUM_MAPPERS):
-            PythonOperator(
-                task_id=f'mapper_{i}',
-                python_callable=dummy_mapper,
-                op_kwargs={'mapper_id': i},
-                # queue='default', # specify if you want a particular Celery queue
-            )
+            build_mapper_operator(i)
 
     # 5) BRANCH
-    branch_op = BranchPythonOperator(
+    branch_op = KubernetesPodOperator(
         task_id='branch_decision',
-        python_callable=decide_branch,
+        name='branch-decision',
+        namespace=NAMESPACE,
+        image=BASE_IMAGE,
+        cmds=["python3"],
+        arguments=[
+            "/opt/airflow/dags/repo/example/mapreduce/example_lib/branch_script.py"],
+        volumes=[volume, dags_volume],
+        volume_mounts=[volume_mount, dags_volume_mount],
+        container_resources=K8S_RESOURCES,
+        get_logs=True,
+        do_xcom_push=True,
+        on_finish_action='delete_pod',
+        in_cluster=True
     )
 
     # 6) BIG PATH / SMALL PATH tasks
-    big_data_path = PythonOperator(
+    big_data_path = KubernetesPodOperator(
         task_id='big_data_path',
-        python_callable=dummy_path_task,
-        op_kwargs={'path_name': 'big_data'},
+        name='big-data-path',
+        namespace=NAMESPACE,
+        image=BASE_IMAGE,
+        cmds=["python3"],
+        arguments=[
+            "/opt/airflow/dags/repo/example/mapreduce/example_lib/path_task.py", "big_data"],
+        volumes=[volume, dags_volume],
+        volume_mounts=[volume_mount, dags_volume_mount],
+        container_resources=K8S_RESOURCES,
+        get_logs=True,
+        do_xcom_push=True,
+        on_finish_action='delete_pod',
+        in_cluster=True
     )
 
-    small_data_path = PythonOperator(
+    small_data_path = KubernetesPodOperator(
         task_id='small_data_path',
-        python_callable=dummy_path_task,
-        op_kwargs={'path_name': 'small_data'},
+        name='small-data-path',
+        namespace=NAMESPACE,
+        image=BASE_IMAGE,
+        cmds=["python3"],
+        arguments=[
+            "/opt/airflow/dags/repo/example/mapreduce/example_lib/path_task.py", "small_data"],
+        volumes=[volume, dags_volume],
+        volume_mounts=[volume_mount, dags_volume_mount],
+        container_resources=K8S_RESOURCES,
+        get_logs=True,
+        do_xcom_push=True,
+        on_finish_action='delete_pod',
+        in_cluster=True
     )
 
     # 7) REDUCE (AGGREGATOR)
-    reduce_task = PythonOperator(
+    reduce_task = KubernetesPodOperator(
         task_id='reduce_aggregations',
-        python_callable=reduce_aggregation,
+        name='reduce-aggregations',
+        namespace=NAMESPACE,
+        image=BASE_IMAGE,
+        cmds=["python3"],
+        arguments=[
+            "/opt/airflow/dags/repo/example/mapreduce/example_lib/reduce_script.py"],
+        volumes=[volume, dags_volume],
+        volume_mounts=[volume_mount, dags_volume_mount],
+        container_resources=K8S_RESOURCES,
+        get_logs=True,
+        do_xcom_push=True,
+        on_finish_action='delete_pod',
+        in_cluster=True,
         trigger_rule=TriggerRule.NONE_FAILED
     )
 
     # 8) END - with cleanup
     # garbage cleanup
-    cleanup_file = BashOperator(
+    cleanup_file = KubernetesPodOperator(
         task_id='cleanup_indicator_file',
-        bash_command='rm -f /opt/airflow/shared/big_input_dataset_ready.txt',
+        name='cleanup-indicator-file',
+        namespace=NAMESPACE,
+        image=BASE_IMAGE,
+        cmds=['bash', '-c'],
+        arguments=['rm -f /opt/airflow/shared/big_input_dataset_ready.txt'],
+        volumes=[volume, dags_volume],
+        volume_mounts=[volume_mount, dags_volume_mount],
+        container_resources=K8S_RESOURCES,
+        get_logs=True,
+        do_xcom_push=False,
+        on_finish_action='delete_pod',
+        in_cluster=True,
         trigger_rule=TriggerRule.ALL_DONE
     )
 
@@ -154,4 +227,5 @@ with DAG(
 
     # DAG FLOW
     start >> generate_file >> wait_for_file >> map_extraction_group
-    map_extraction_group >> branch_op >> [big_data_path, small_data_path] >> reduce_task >> cleanup_file >> end
+    map_extraction_group >> branch_op >> [
+        big_data_path, small_data_path] >> reduce_task >> cleanup_file >> end
