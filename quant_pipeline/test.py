@@ -4,10 +4,7 @@ from airflow.operators.empty import EmptyOperator
 from airflow.models.param import Param
 from airflow.providers.cncf.kubernetes.operators.kubernetes_pod import KubernetesPodOperator
 
-# 关键：导入 Kubernetes Python Client 中的各种模型类
-from kubernetes.client import (
-    models as k8s,  # 常见写法
-)
+from kubernetes.client import models as k8s
 
 default_args = {
     "owner": "quant",
@@ -18,29 +15,35 @@ default_args = {
     "retry_delay": timedelta(minutes=5),
 }
 
-
 with DAG(
     dag_id="405b_quant_pipeline",
     default_args=default_args,
-    schedule=None,  # 仅示例，按需调整
+    schedule=None,  # 不自动调度，只能手动触发
     start_date=datetime(2025, 1, 1),
     catchup=False,
     params={
-        'model_input': Param(default='/mnt/project/models/input', type='string', description='Path to input model'),
-        'model_output': Param(default='/mnt/project/models/output', type='string', description='Path to save quant model'),
-        'scheme': Param(default='FP8_DYNAMIC', enum=['FP8_DYNAMIC','INT8_STATIC'], description='Quant scheme')
+        'model_input': Param(
+            default='/mnt/share/ocean/ocean3.1-2.8',
+            type='string',
+            description='Path to input model'
+        ),
+        'model_output': Param(
+            default='/mnt/share/ocean/output/quant/',
+            type='string',
+            description='Path to save quant model'
+        ),
+        'scheme': Param(
+            default='FP8_DYNAMIC',
+            enum=['FP8_DYNAMIC','INT8_STATIC'],
+            description='Quant scheme'
+        )
     },
     tags=["test"],
 ) as dag:
 
     start = EmptyOperator(task_id="start")
 
-    #
-    # 1) initContainer - 使用 git-sync 拉取代码
-    #
-    #
-    # 2) 定义主容器的环境变量 (env) - 对应 Pod YAML 里的 env:
-    #
+    # 环境变量
     env_vars = [
         k8s.V1EnvVar(name="MLP_CLUSTER", value="va"),
         k8s.V1EnvVar(name="MLP_PROJECT", value="llm"),
@@ -65,15 +68,12 @@ with DAG(
         k8s.V1EnvVar(name="CUDA_VISIBLE_DEVICES", value="0"),
     ]
 
-    #
-    # 3) 定义资源限制 (requests/limits)
-    #
+    # 资源限制
     container_resources = k8s.V1ResourceRequirements(
         limits={
             "cpu": "212800m",
             "memory": "1992294Mi",
             "nvidia.com/gpu": "8",
-            # 下面 RDMA 相关视具体集群而定
             "nvidia.com/rdma0": "1",
             "nvidia.com/rdma1": "1",
             "nvidia.com/rdma2": "1",
@@ -98,9 +98,7 @@ with DAG(
         },
     )
 
-    #
-    # 4) 定义各类 Volume (hostPath, emptyDir 等) + 对应的 VolumeMount
-    #
+    # Volumes
     volumes = [
         k8s.V1Volume(
             name="host-path-share",
@@ -130,13 +128,10 @@ with DAG(
                 size_limit="1Ti",
             ),
         ),
-        # 新增的空目录卷，用来存放 git-sync 拉下来的内容
         k8s.V1Volume(
             name="git-volume",
             empty_dir=k8s.V1EmptyDirVolumeSource(),
         ),
-        # 下面这个 projected Volume (kube-api-access-jbzsf) 
-        # 若需要也可定义；通常由 K8s 自动注入，手动声明也行。
         k8s.V1Volume(
             name="kube-api-access-jbzsf",
             projected=k8s.V1ProjectedVolumeSource(
@@ -147,98 +142,48 @@ with DAG(
                             path="token",
                         )
                     ),
-                    k8s.V1VolumeProjection(
-                        config_map=k8s.V1ConfigMapProjection(
-                            name="kube-root-ca.crt",
-                            items=[
-                                k8s.V1KeyToPath(
-                                    key="ca.crt",
-                                    path="ca.crt"
-                                )
-                            ]
-                        )
-                    ),
-                    k8s.V1VolumeProjection(
-                        downward_api=k8s.V1DownwardAPIProjection(
-                            items=[
-                                k8s.V1DownwardAPIVolumeFile(
-                                    path="namespace",
-                                    field_ref=k8s.V1ObjectFieldSelector(
-                                        api_version="v1",
-                                        field_path="metadata.namespace",
-                                    )
-                                )
-                            ]
-                        )
-                    )
                 ]
             )
         )
     ]
 
     volume_mounts = [
-        k8s.V1VolumeMount(
-            name="host-path-share", mount_path="/mnt/share"
-        ),
-        k8s.V1VolumeMount(
-            name="host-path-project", mount_path="/mnt/project"
-        ),
-        k8s.V1VolumeMount(
-            name="host-path-personal", mount_path="/mnt/personal"
-        ),
-        k8s.V1VolumeMount(
-            name="dshm", mount_path="/dev/shm"
-        ),
+        k8s.V1VolumeMount(name="host-path-share", mount_path="/mnt/share"),
+        k8s.V1VolumeMount(name="host-path-project", mount_path="/mnt/project"),
+        k8s.V1VolumeMount(name="host-path-personal", mount_path="/mnt/personal"),
+        k8s.V1VolumeMount(name="dshm", mount_path="/dev/shm"),
         k8s.V1VolumeMount(
             name="kube-api-access-jbzsf",
             mount_path="/var/run/secrets/kubernetes.io/serviceaccount",
             read_only=True,
         ),
-        # 挂载上面 emptyDir 卷，以便访问 /opt/scripts 下的 Git 同步内容
-        k8s.V1VolumeMount(
-            name="git-volume", mount_path="/opt/scripts"
-        ),
+        k8s.V1VolumeMount(name="git-volume", mount_path="/opt/scripts"),
     ]
 
-    #
-    # 5) 主容器启动命令 & 参数 (对应 YAML 中 command/args)
-    #
+    # 主容器命令与参数 (一重列表)
     main_cmds = ["python3"]
-    # 注意 Python 字符串的缩进与换行。
-    main_args=[
-            "/mnt/project/llm/users/xug/code/Ocean/users/xuguang/quant/ptq/hf_model_quant.py",
-            "--model_id", "{{ params.model_input }}",
-            "--save_dir", "{{ params.model_output }}",
-            "--scheme", "{{ params.scheme }}"
-        ],
-    #
-    # 6) 创建实际的 KubernetesPodOperator
-    #
+    main_args = [
+        "/mnt/project/llm/users/xug/code/Ocean/users/xuguang/quant/ptq/hf_model_quant.py",
+        "--model_id", "{{ params.model_input }}",
+        "--save_dir", "{{ params.model_output }}",
+        "--scheme",   "{{ params.scheme }}"
+    ]
+
+    # KubernetesPodOperator
     quant_task = KubernetesPodOperator(
         task_id="quant_task",
-        # 填写跟你 YAML 一致的 namespace
         namespace="airflow",
-        # 用到的镜像
         image="hub.anuttacon.com/infra/ocean:latest",
-        # initContainer
-        # init_containers=[git_sync_init_container],
-        # working_dir="/root/code/Ocean",
-        # 主容器启动命令与参数
         cmds=main_cmds,
         arguments=main_args,
-        # 资源限制
         container_resources=container_resources,
-        # 挂载的卷
         volumes=volumes,
         volume_mounts=volume_mounts,
-        # 环境变量
         env_vars=env_vars,
-        # 是否查看日志、是否删除 Pod 等
         get_logs=True,
-        is_delete_operator_pod=False,  # 视需求设置 True/False
+        is_delete_operator_pod=False,  # 是否结束后删除 Pod
         in_cluster=True,
         do_xcom_push=False,
     )
 
-    # 此处也可以添加任务依赖
     start >> quant_task
