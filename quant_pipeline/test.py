@@ -32,6 +32,20 @@ with DAG(
     start_date=datetime(2025, 1, 30),
     catchup=False,
     tags=['quant', 'test'],
+    params={
+        'model_path': {
+            'type': 'string',
+            'default': '/default/model/path'
+        },
+        'save_path': {
+            'type': 'string',
+            'default': '/default/save/path'
+        },
+        'scheme': {
+            'type': 'string',
+            'default': 'FP8_DYNAMIC'
+        }
+    },
 ) as dag:
 
     start = EmptyOperator(task_id='start')
