@@ -173,7 +173,7 @@ with DAG(
     quant_task = KubernetesPodOperator(
         task_id="quant_task",
         namespace="airflow",
-        image="hub.anuttacon.com/infra/ocean:latest",
+        image="hub.anuttacon.com/infra/quant:20241231",
         cmds=main_cmds,
         arguments=main_args,
         container_resources=container_resources,
