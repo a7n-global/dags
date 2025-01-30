@@ -215,6 +215,7 @@ with DAG(
     # 6) 创建实际的 KubernetesPodOperator
     #
     quant_task = KubernetesPodOperator(
+        task_id="quant_task",
         # 填写跟你 YAML 一致的 namespace
         namespace="project-llm",
         # 用到的镜像
