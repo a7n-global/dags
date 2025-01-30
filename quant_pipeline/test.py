@@ -217,7 +217,7 @@ with DAG(
     quant_task = KubernetesPodOperator(
         task_id="quant_task",
         # 填写跟你 YAML 一致的 namespace
-        namespace="project-llm",
+        namespace="airflow",
         # 用到的镜像
         image="hub.anuttacon.com/infra/ocean:latest",
         # initContainer
