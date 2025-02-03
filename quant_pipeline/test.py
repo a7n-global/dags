@@ -188,11 +188,11 @@ with DAG(
         in_cluster=True,
         do_xcom_push=False,
         pod_override=k8s_client.V1Pod(
-        spec=k8s_client.V1PodSpec(
-            scheduler_name="volcano",
-            # 如果还有其他你想覆盖的字段，也可以在这里指定
-            )
-        )
+        pod_override={
+            "spec": {
+                "schedulerName": "volcano",  # 你贴出来的 Pod 上是 "volcano"
+            }
+        },
     )
 
     start >> quant_task
