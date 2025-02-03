@@ -270,13 +270,38 @@ with DAG(
         "--enable_prefix_caching",
     ]
 
+    def get_dshm_volume(gpu_count):
+        base_size = 256  # 基础大小（2 GPUs 对应 256Gi）
+        size_per_2gpu = base_size * (gpu_count // 2)  # 按照 GPU 数量比例计算
+        return k8s.V1Volume(
+            name="dshm",
+            empty_dir=k8s.V1EmptyDirVolumeSource(
+                medium="Memory",
+                size_limit=f"{size_per_2gpu}Gi",
+            ),
+        )
+
+    gpu_count = "{{ params.serving_gpus }}"
     serving_resource = None
-    if "{{ params.serving_gpus }}" == "2":
-        serving_resource = resources_2gpu
-    elif "{{ params.serving_gpus }}" == "4":
-        serving_resource = resources_4gpu
-    elif "{{ params.serving_gpus }}" == "8":
-        serving_resource = resources_8gpu
+    serving_volumes = volumes
+    if gpu_count in ["2", "4", "8"]:
+        # 动态选择资源配置
+        serving_resource = {
+            "2": resources_2gpu,
+            "4": resources_4gpu,
+            "8": resources_8gpu
+        }[gpu_count]
+        
+        # 添加共享内存卷（256Gi per 2 GPUs）
+        serving_volumes = volumes + [
+            k8s.V1Volume(
+                name="dshm",
+                empty_dir=k8s.V1EmptyDirVolumeSource(
+                    medium="Memory",
+                    size_limit=f"{int(gpu_count) * 128}Gi",  # 2 GPUs = 256Gi, 4 GPUs = 512Gi, 8 GPUs = 1024Gi
+                ),
+            )
+        ]
 
     if "{{ params.serving_gpus }}" != "0":
         serving_task = KubernetesPodOperator(
@@ -286,7 +311,7 @@ with DAG(
             cmds=serving_main_cmds,
             arguments=serving_main_args,
             container_resources=serving_resource,
-            volumes=volumes,
+            volumes=serving_volumes,
             volume_mounts=volume_mounts,
             env_vars=env_vars,
             get_logs=True,
