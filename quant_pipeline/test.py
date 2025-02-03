@@ -254,6 +254,7 @@ with DAG(
         volume_mounts=volume_mounts,
         env_vars=env_vars,
         get_logs=True,
+        startup_timeout_seconds=600,
         is_delete_operator_pod=True,  # 是否结束后删除 Pod
         in_cluster=True,
         do_xcom_push=False,
@@ -291,6 +292,7 @@ with DAG(
             get_logs=True,
             is_delete_operator_pod=False,  # 是否结束后删除 Pod
             in_cluster=True,
+            startup_timeout_seconds=600,
             do_xcom_push=False,
         )
         start >> quant_task >> serving_task
