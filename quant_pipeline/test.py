@@ -5,6 +5,7 @@ from airflow.models.param import Param
 from airflow.providers.cncf.kubernetes.operators.kubernetes_pod import KubernetesPodOperator
 
 from kubernetes.client import models as k8s
+from kubernetes import client as k8s_client
 
 default_args = {
     "owner": "quant",
@@ -160,12 +161,14 @@ with DAG(
         k8s.V1VolumeMount(name="git-volume", mount_path="/opt/scripts"),
     ]
 
+    model_output_base = " /mnt/share/ocean/output/quant"
+    
+
     # 主容器命令与参数 (一重列表)
     main_cmds = ["python3"]
     main_args = [
         "/mnt/project/llm/users/xug/code/Ocean/users/xuguang/quant/ptq/hf_model_quant.py",
         "--model_id", "{{ params.model_input }}",
-        "--save_dir", "{{ params.model_output }}",
         "--scheme",   "{{ params.scheme }}"
     ]
 
@@ -184,6 +187,12 @@ with DAG(
         is_delete_operator_pod=False,  # 是否结束后删除 Pod
         in_cluster=True,
         do_xcom_push=False,
+        pod_override=k8s_client.V1Pod(
+        spec=k8s_client.V1PodSpec(
+            scheduler_name="volcano",
+            # 如果还有其他你想覆盖的字段，也可以在这里指定
+            )
+        )
     )
 
     start >> quant_task
