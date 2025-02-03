@@ -269,6 +269,7 @@ with DAG(
         "--enable_prefix_caching",
     ]
 
+    serving_resource = None
     if "{{ params.serving_gpus }}" == "2":
         serving_resource = resources_2gpu
     elif "{{ params.serving_gpus }}" == "4":
