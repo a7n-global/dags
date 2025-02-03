@@ -187,7 +187,6 @@ with DAG(
         is_delete_operator_pod=False,  # 是否结束后删除 Pod
         in_cluster=True,
         do_xcom_push=False,
-        pod_override=k8s_client.V1Pod(
         pod_override={
             "spec": {
                 "schedulerName": "volcano",  # 你贴出来的 Pod 上是 "volcano"
