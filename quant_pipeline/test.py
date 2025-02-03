@@ -36,7 +36,12 @@ with DAG(
             default='FP8_DYNAMIC',
             enum=['FP8_DYNAMIC','INT8_STATIC'],
             description='Quant scheme'
-        )
+        ),
+       'serving_gpus': Param(
+            default=0,
+            enum=[0, 2, 4, 8],
+            description='Number of GPUs for serving (0=no serving, 2/4/8=deploy serving)'
+        ),
     },
     tags=["test"],
 ) as dag:
@@ -67,6 +72,74 @@ with DAG(
         k8s.V1EnvVar(name="PET_NNODES", value="1"),
         k8s.V1EnvVar(name="CUDA_VISIBLE_DEVICES", value="0"),
     ]
+    resources_2gpu = k8s.V1ResourceRequirements(
+    limits={
+        "cpu": "53200m",          # 212800 / 4
+        "memory": "498073Mi",     # 1992294 / 4
+        "nvidia.com/gpu": "2",
+        "nvidia.com/rdma0": "1",
+        "nvidia.com/rdma1": "1",
+    },
+    requests={
+        "cpu": "50400m",          # 201600 / 4
+        "memory": "471859Mi",     # 1887436 / 4
+        "nvidia.com/gpu": "2",
+        "nvidia.com/rdma0": "1",
+        "nvidia.com/rdma1": "1",
+    }
+)
+
+    # 4 GPUs
+    resources_4gpu = k8s.V1ResourceRequirements(
+        limits={
+            "cpu": "106400m",         # 212800 / 2
+            "memory": "996147Mi",     # 1992294 / 2
+            "nvidia.com/gpu": "4",
+            "nvidia.com/rdma0": "1",
+            "nvidia.com/rdma1": "1",
+            "nvidia.com/rdma2": "1",
+            "nvidia.com/rdma3": "1",
+        },
+        requests={
+            "cpu": "100800m",         # 201600 / 2
+            "memory": "943718Mi",     # 1887436 / 2
+            "nvidia.com/gpu": "4",
+            "nvidia.com/rdma0": "1",
+            "nvidia.com/rdma1": "1",
+            "nvidia.com/rdma2": "1",
+            "nvidia.com/rdma3": "1",
+        }
+    )
+
+    # 8 GPUs (原始配置)
+    resources_8gpu = k8s.V1ResourceRequirements(
+        limits={
+            "cpu": "212800m",
+            "memory": "1992294Mi",
+            "nvidia.com/gpu": "8",
+            "nvidia.com/rdma0": "1",
+            "nvidia.com/rdma1": "1",
+            "nvidia.com/rdma2": "1",
+            "nvidia.com/rdma3": "1",
+            "nvidia.com/rdma4": "1",
+            "nvidia.com/rdma5": "1",
+            "nvidia.com/rdma6": "1",
+            "nvidia.com/rdma7": "1",
+        },
+        requests={
+            "cpu": "201600m",
+            "memory": "1887436Mi",
+            "nvidia.com/gpu": "8",
+            "nvidia.com/rdma0": "1",
+            "nvidia.com/rdma1": "1",
+            "nvidia.com/rdma2": "1",
+            "nvidia.com/rdma3": "1",
+            "nvidia.com/rdma4": "1",
+            "nvidia.com/rdma5": "1",
+            "nvidia.com/rdma6": "1",
+            "nvidia.com/rdma7": "1",
+        }
+    )
 
     # 资源限制
     container_resources = k8s.V1ResourceRequirements(
@@ -161,8 +234,8 @@ with DAG(
     ]
 
     # 主容器命令与参数 (一重列表)
-    main_cmds = ["python3"]
-    main_args = [
+    quant_main_cmds = ["python3"]
+    quant_main_args = [
         "/mnt/project/llm/users/xug/code/Ocean/users/xuguang/quant/ptq/hf_model_quant.py",
         "--model_id", "{{ params.model_input }}",
         "--save_dir", "{{ params.model_output }}",
@@ -174,16 +247,51 @@ with DAG(
         task_id="quant_task",
         namespace="airflow",
         image="hub.anuttacon.com/infra/quant:20241231",
-        cmds=main_cmds,
-        arguments=main_args,
-        container_resources=container_resources,
+        cmds=quant_main_cmds,
+        arguments=quant_main_args,
+        container_resources=resources_8gpu,
         volumes=volumes,
         volume_mounts=volume_mounts,
         env_vars=env_vars,
         get_logs=True,
-        is_delete_operator_pod=False,  # 是否结束后删除 Pod
+        is_delete_operator_pod=True,  # 是否结束后删除 Pod
         in_cluster=True,
         do_xcom_push=False,
     )
 
-    start >> quant_task
+    serving_main_cmds = ["python3"]
+    serving_main_args = [
+        "-m", "vllm.entrypoints.openai.api_server",
+        "--model", "{{ params.model_output }}",
+        "--port", "6002",
+        "--tensor-parallel-size", "{{ params.serving_gpus }}",
+        "--gpu_memory_utilization", "0.95",
+        "--enable_prefix_caching",
+    ]
+
+    if "{{ params.serving_gpus }}" == "2":
+        serving_resource = resources_2gpu
+    elif "{{ params.serving_gpus }}" == "4":
+        serving_resource = resources_4gpu
+    elif "{{ params.serving_gpus }}" == "8":
+        serving_resource = resources_8gpu
+
+    if "{{ params.serving_gpus }}" != "0":
+        serving_task = KubernetesPodOperator(
+            task_id="serving_task",
+            namespace="airflow",
+            image="hub.anuttacon.com/docker.io/vllm/vllm-openai:v0.6.4",
+            cmds=serving_main_cmds,
+            arguments=serving_main_args,
+            container_resources=serving_resource,
+            volumes=volumes,
+            volume_mounts=volume_mounts,
+            env_vars=env_vars,
+            get_logs=True,
+            is_delete_operator_pod=False,  # 是否结束后删除 Pod
+            in_cluster=True,
+            do_xcom_push=False,
+        )
+        start >> quant_task >> serving_task
+    else:
+        start >> quant_task
