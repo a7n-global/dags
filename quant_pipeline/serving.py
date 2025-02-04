@@ -16,7 +16,7 @@ default_args = {
 }
 
 with DAG(
-    dag_id="quant_pipeline",
+    dag_id="quant_serving_test",
     default_args=default_args,
     schedule=None,  # 不自动调度，只能手动触发
     start_date=datetime(2025, 1, 1),
@@ -215,23 +215,6 @@ with DAG(
     quant_volumes = basic_volumes.copy()
     # 这里硬编码了 8个GPU 的场景，因为原先代码是这样写的
     quant_volumes.append(get_dshm_volume(8))
-
-    quant_task = KubernetesPodOperator(
-        task_id="quant_task",
-        namespace="airflow",
-        image="hub.anuttacon.com/infra/quant:20241231",
-        cmds=quant_main_cmds,
-        arguments=quant_main_args,
-        container_resources=resources_8gpu,
-        volumes=quant_volumes,
-        volume_mounts=volume_mounts,
-        env_vars=quant_env_vars,
-        get_logs=True,
-        startup_timeout_seconds=600,
-        is_delete_operator_pod=True,  # 是否结束后删除 Pod
-        in_cluster=True,
-        do_xcom_push=False,
-    )
 
     # ---------------------
     # Serving 相关
