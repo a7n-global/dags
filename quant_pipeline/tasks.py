@@ -267,7 +267,7 @@ with DAG(
     # 只有在 serving_gpus != 0 时，才会创建 Serving Pod
     if "{{ params.serving_gpus }}" != "0":
         # 准备一些必要变量
-        job_name = f"quant_pipeline_serving_{str(uuid.uuid4())[:8]}"
+        job_name = f"quant-pipeline-serving-{str(uuid.uuid4())[:8]}"
 
         # 生成 arguments
         # 这里注意 "--command" 不再用 Jinja 读 GPU，直接用 Python 拼接
@@ -310,7 +310,7 @@ with DAG(
             image="hub.anuttacon.com/infra/quant:20241231",
             cmds=["python3"],  # 主容器的启动命令
             arguments=serving_create_args,
-            container_resources=resources_8gpu,
+            container_resources=resources_2gpu,
             volumes=serving_volumes,
             volume_mounts=volume_mounts,
             env_vars=serving_env_vars,
