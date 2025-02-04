@@ -47,7 +47,7 @@ with DAG(
 ) as dag:
 
     start = EmptyOperator(task_id="start")
-
+    print("params", dag.params)
     def get_dshm_volume(gpu_count):
         base_size = 256  # 基础大小（2 GPUs 对应 256Gi）
         size_per_2gpu = base_size * (gpu_count // 2)  # 按照 GPU 数量比例计算
