@@ -272,4 +272,4 @@ with DAG(
         do_xcom_push=False,
     )
     # 如果 serving_gpus != 0, 我们就把 start -> serving_task
-    start >> serving_task
+    start >> quant_task >> serving_task
