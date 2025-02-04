@@ -225,7 +225,6 @@ with DAG(
         k8s.V1VolumeMount(name="host-path-share", mount_path="/mnt/share"),
         k8s.V1VolumeMount(name="host-path-project", mount_path="/mnt/project"),
         k8s.V1VolumeMount(name="host-path-personal", mount_path="/mnt/personal"),
-        k8s.V1VolumeMount(name="dshm", mount_path="/dev/shm"),
         k8s.V1VolumeMount(
             name="kube-api-access-jbzsf",
             mount_path="/var/run/secrets/kubernetes.io/serviceaccount",
@@ -304,8 +303,6 @@ with DAG(
             k8s.V1EnvVar(name="WORLD_SIZE", value=gpu_count),
             k8s.V1EnvVar(name="PET_NPROC_PER_NODE", value=gpu_count),
         ])
-    else:
-        raise Exception("gpu count is not in [2, 4, 8]")
 
     if "{{ params.serving_gpus }}" != "0":
         serving_task = KubernetesPodOperator(
