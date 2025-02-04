@@ -304,6 +304,8 @@ with DAG(
             k8s.V1EnvVar(name="WORLD_SIZE", value=gpu_count),
             k8s.V1EnvVar(name="PET_NPROC_PER_NODE", value=gpu_count),
         ])
+    else:
+        raise Exception("gpu count is not in [2, 4, 8]")
 
     if "{{ params.serving_gpus }}" != "0":
         serving_task = KubernetesPodOperator(
@@ -322,6 +324,6 @@ with DAG(
             startup_timeout_seconds=600,
             do_xcom_push=False,
         )
-        start >> quant_task >> serving_task
+        start >> serving_task
     else:
         start >> quant_task
