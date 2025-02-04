@@ -245,8 +245,8 @@ with DAG(
 
     quant_env_vars = basic_env_vars.copy()
     quant_env_vars.extend([
-            k8s.V1EnvVar(name="WORLD_SIZE", value=8),
-            k8s.V1EnvVar(name="PET_NPROC_PER_NODE", value=8),
+            k8s.V1EnvVar(name="WORLD_SIZE", value="8"),
+            k8s.V1EnvVar(name="PET_NPROC_PER_NODE", value="8"),
             k8s.V1EnvVar(name="CUDA_VISIBLE_DEVICES", value="0"),
         ])
     quant_volumes = basic_volumes.copy()
