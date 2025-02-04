@@ -96,41 +96,14 @@ with DAG(
     # ---------------------
     # 资源定义 (2, 4, 8 GPUs)
     # ---------------------
-    resources_2gpu = k8s.V1ResourceRequirements(
+    resources_cheap = k8s.V1ResourceRequirements(
         limits={
-            "cpu": "53200m",
-            "memory": "498073Mi",
-            "nvidia.com/gpu": "2",
-            "nvidia.com/rdma0": "1",
-            "nvidia.com/rdma1": "1",
+            "cpu": "23200m",
+            "memory": "228073Mi",
         },
         requests={
-            "cpu": "50400m",
-            "memory": "471859Mi",
-            "nvidia.com/gpu": "2",
-            "nvidia.com/rdma0": "1",
-            "nvidia.com/rdma1": "1",
-        }
-    )
-
-    resources_4gpu = k8s.V1ResourceRequirements(
-        limits={
-            "cpu": "106400m",
-            "memory": "996147Mi",
-            "nvidia.com/gpu": "4",
-            "nvidia.com/rdma0": "1",
-            "nvidia.com/rdma1": "1",
-            "nvidia.com/rdma2": "1",
-            "nvidia.com/rdma3": "1",
-        },
-        requests={
-            "cpu": "100800m",
-            "memory": "943718Mi",
-            "nvidia.com/gpu": "4",
-            "nvidia.com/rdma0": "1",
-            "nvidia.com/rdma1": "1",
-            "nvidia.com/rdma2": "1",
-            "nvidia.com/rdma3": "1",
+            "cpu": "23200m",
+            "memory": "228073Mi",
         }
     )
 
@@ -273,34 +246,14 @@ with DAG(
         # 这里注意 "--command" 不再用 Jinja 读 GPU，直接用 Python 拼接
         # 但对 model_output 依然保留 "{{ params.model_output }}" 给 Airflow 渲染
         serving_create_args = [
-            "/mnt/project/llm/users/xug/code/Ocean/users/xuguang/quant/serving/serving_create.py",
-            "--url", "https://va-mlp.anuttacon.com/api",
-            "--project_id", "llm", 
-            "--serving_name", job_name,
-            "--serving_port", "6002",
-            "--ingress_domain", "serving.va-mlp.anuttacon.com",
-            "--serving_endpoint", f"http://{job_name}.serving.va-mlp.anuttacon.com",
-            "--cpu", "224",
-            "--memory", "2000",
-            "--gpu", "8",
-            "--gpu_type", "NVIDIA-H100-80GB-HBM3",
-            "--command", (
-                "python3 -m vllm.entrypoints.openai.api_server "
-                f"--model {{ params.model_output }} "
-                "--port 6002 "
-                "--max-model-len 10240 "
-                f"--tensor-parallel-size 8 "
-                "--gpu_memory_utilization 0.9"
-            ),
-            "--container_name", job_name,
-            "--image_repository_id", "repository-ij5zby9vpu",
-            "--image_tag", "customized-v0.6.4",
-            "--description", "for evaluation pipeline use"
+            "/mnt/project/llm/users/xug/code/Ocean/users/xuguang/quant/airflow_serving_startup.sh",
+            f"--model {{ params.model_output }} "
+            f"{job_name}",
         ]
 
         # 准备资源、volume
         serving_volumes = basic_volumes.copy()
-        serving_volumes.append(get_dshm_volume(8))
+        serving_volumes.append(get_dshm_volume(2))
         serving_env_vars = basic_env_vars.copy()
 
         # 创建 Serving Pod 任务
@@ -310,14 +263,14 @@ with DAG(
             image="hub.anuttacon.com/infra/quant:20241231",
             cmds=["python3"],  # 主容器的启动命令
             arguments=serving_create_args,
-            container_resources=resources_2gpu,
+            container_resources=resources_cheap,
             volumes=serving_volumes,
             volume_mounts=volume_mounts,
             env_vars=serving_env_vars,
             get_logs=True,
             is_delete_operator_pod=True,
             in_cluster=True,
-            startup_timeout_seconds=600,
+            startup_timeout_seconds=1200,
             do_xcom_push=False,
         )
         # 如果 serving_gpus != 0, 我们就把 start -> serving_task
