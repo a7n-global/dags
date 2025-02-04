@@ -48,8 +48,19 @@ with DAG(
 
     start = EmptyOperator(task_id="start")
 
+    def get_dshm_volume(gpu_count):
+        base_size = 256  # 基础大小（2 GPUs 对应 256Gi）
+        size_per_2gpu = base_size * (gpu_count // 2)  # 按照 GPU 数量比例计算
+        return k8s.V1Volume(
+            name="dshm",
+            empty_dir=k8s.V1EmptyDirVolumeSource(
+                medium="Memory",
+                size_limit=f"{size_per_2gpu}Gi",
+            ),
+        )
+
     # 环境变量
-    env_vars = [
+    basic_env_vars = [
         k8s.V1EnvVar(name="MLP_CLUSTER", value="va"),
         k8s.V1EnvVar(name="MLP_PROJECT", value="llm"),
         k8s.V1EnvVar(name="MLP_USER", value="xuguang.zhao"),
@@ -64,30 +75,27 @@ with DAG(
         k8s.V1EnvVar(name="PET_MASTER_PORT", value="23456"),
         k8s.V1EnvVar(name="MASTER_ADDR", value="localhost"),
         k8s.V1EnvVar(name="PET_MASTER_ADDR", value="localhost"),
-        k8s.V1EnvVar(name="WORLD_SIZE", value="8"),
         k8s.V1EnvVar(name="RANK", value="0"),
         k8s.V1EnvVar(name="NODE_RANK", value="0"),
-        k8s.V1EnvVar(name="PET_NPROC_PER_NODE", value="8"),
         k8s.V1EnvVar(name="PET_NODE_RANK", value="0"),
         k8s.V1EnvVar(name="PET_NNODES", value="1"),
-        k8s.V1EnvVar(name="CUDA_VISIBLE_DEVICES", value="0"),
     ]
     resources_2gpu = k8s.V1ResourceRequirements(
-    limits={
-        "cpu": "53200m",          # 212800 / 4
-        "memory": "498073Mi",     # 1992294 / 4
-        "nvidia.com/gpu": "2",
-        "nvidia.com/rdma0": "1",
-        "nvidia.com/rdma1": "1",
-    },
-    requests={
-        "cpu": "50400m",          # 201600 / 4
-        "memory": "471859Mi",     # 1887436 / 4
-        "nvidia.com/gpu": "2",
-        "nvidia.com/rdma0": "1",
-        "nvidia.com/rdma1": "1",
-    }
-)
+        limits={
+            "cpu": "53200m",          # 212800 / 4
+            "memory": "498073Mi",     # 1992294 / 4
+            "nvidia.com/gpu": "2",
+            "nvidia.com/rdma0": "1",
+            "nvidia.com/rdma1": "1",
+        },
+        requests={
+            "cpu": "50400m",          # 201600 / 4
+            "memory": "471859Mi",     # 1887436 / 4
+            "nvidia.com/gpu": "2",
+            "nvidia.com/rdma0": "1",
+            "nvidia.com/rdma1": "1",
+        }
+    )
 
     # 4 GPUs
     resources_4gpu = k8s.V1ResourceRequirements(
@@ -172,7 +180,7 @@ with DAG(
     )
 
     # Volumes
-    volumes = [
+    basic_volumes = [
         k8s.V1Volume(
             name="host-path-share",
             host_path=k8s.V1HostPathVolumeSource(
@@ -192,13 +200,6 @@ with DAG(
             host_path=k8s.V1HostPathVolumeSource(
                 path="/mnt/ddnfs01/personal/xuguang.zhao",
                 type="Directory",
-            ),
-        ),
-        k8s.V1Volume(
-            name="dshm",
-            empty_dir=k8s.V1EmptyDirVolumeSource(
-                medium="Memory",
-                size_limit="1Ti",
             ),
         ),
         k8s.V1Volume(
@@ -242,6 +243,16 @@ with DAG(
         "--scheme",   "{{ params.scheme }}"
     ]
 
+    quant_env_vars = basic_env_vars.copy()
+    quant_env_vars.extend([
+            k8s.V1EnvVar(name="WORLD_SIZE", value=8),
+            k8s.V1EnvVar(name="PET_NPROC_PER_NODE", value=8),
+            k8s.V1EnvVar(name="CUDA_VISIBLE_DEVICES", value="0"),
+        ])
+    quant_volumes = basic_volumes.copy()
+    quant_volumes.append(
+        get_dshm_volume(int(8))
+    )
     # KubernetesPodOperator
     quant_task = KubernetesPodOperator(
         task_id="quant_task",
@@ -250,9 +261,9 @@ with DAG(
         cmds=quant_main_cmds,
         arguments=quant_main_args,
         container_resources=resources_8gpu,
-        volumes=volumes,
+        volumes=quant_volumes,
         volume_mounts=volume_mounts,
-        env_vars=env_vars,
+        env_vars=quant_env_vars,
         get_logs=True,
         startup_timeout_seconds=600,
         is_delete_operator_pod=True,  # 是否结束后删除 Pod
@@ -270,20 +281,11 @@ with DAG(
         "--enable_prefix_caching",
     ]
 
-    def get_dshm_volume(gpu_count):
-        base_size = 256  # 基础大小（2 GPUs 对应 256Gi）
-        size_per_2gpu = base_size * (gpu_count // 2)  # 按照 GPU 数量比例计算
-        return k8s.V1Volume(
-            name="dshm",
-            empty_dir=k8s.V1EmptyDirVolumeSource(
-                medium="Memory",
-                size_limit=f"{size_per_2gpu}Gi",
-            ),
-        )
-
     gpu_count = "{{ params.serving_gpus }}"
     serving_resource = None
-    serving_volumes = volumes
+    serving_volumes = basic_volumes.copy()
+    serving_volume_mounts = volume_mounts.copy()
+    serving_env_vars = basic_env_vars.copy()
     if gpu_count in ["2", "4", "8"]:
         # 动态选择资源配置
         serving_resource = {
@@ -292,16 +294,16 @@ with DAG(
             "8": resources_8gpu
         }[gpu_count]
         
-        # 添加共享内存卷（256Gi per 2 GPUs）
-        serving_volumes = volumes + [
-            k8s.V1Volume(
-                name="dshm",
-                empty_dir=k8s.V1EmptyDirVolumeSource(
-                    medium="Memory",
-                    size_limit=f"{int(gpu_count) * 128}Gi",  # 2 GPUs = 256Gi, 4 GPUs = 512Gi, 8 GPUs = 1024Gi
-                ),
-            )
-        ]
+        serving_volumes.append(
+            get_dshm_volume(int(gpu_count))
+        )
+        serving_volume_mounts.append(
+            k8s.V1VolumeMount(name="dshm", mount_path="/dev/shm")
+        )
+        serving_env_vars.extend([
+            k8s.V1EnvVar(name="WORLD_SIZE", value=gpu_count),
+            k8s.V1EnvVar(name="PET_NPROC_PER_NODE", value=gpu_count),
+        ])
 
     if "{{ params.serving_gpus }}" != "0":
         serving_task = KubernetesPodOperator(
@@ -312,8 +314,8 @@ with DAG(
             arguments=serving_main_args,
             container_resources=serving_resource,
             volumes=serving_volumes,
-            volume_mounts=volume_mounts,
-            env_vars=env_vars,
+            volume_mounts=serving_volume_mounts,
+            env_vars=serving_env_vars,
             get_logs=True,
             is_delete_operator_pod=False,  # 是否结束后删除 Pod
             in_cluster=True,
