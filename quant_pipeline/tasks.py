@@ -237,45 +237,39 @@ with DAG(
     # Serving 相关
     # ---------------------
 
-    # 只有在 serving_gpus != 0 时，才会创建 Serving Pod
-    if "{{ params.serving_gpus }}" != "0":
-        # 准备一些必要变量
-        job_name = f"quant-pipeline-serving-{str(uuid.uuid4())[:8]}"
+    # 准备一些必要变量
+    job_name = f"quant-pipeline-serving-{str(uuid.uuid4())[:8]}"
 
-        # 生成 arguments
-        # 这里注意 "--command" 不再用 Jinja 读 GPU，直接用 Python 拼接
-        # 但对 model_output 依然保留 "{{ params.model_output }}" 给 Airflow 渲染
-        serving_create_args = [
-            "/mnt/project/llm/users/xug/code/Ocean/users/xuguang/quant/airflow_serving_startup.sh",
-            f"--model {{ params.model_output }} "
-            f"{job_name}",
-        ]
+    # 生成 arguments
+    # 这里注意 "--command" 不再用 Jinja 读 GPU，直接用 Python 拼接
+    # 但对 model_output 依然保留 "{{ params.model_output }}" 给 Airflow 渲染
+    serving_create_args = [
+        "/mnt/project/llm/users/xug/code/Ocean/users/xuguang/quant/airflow_serving_startup.sh",
+        f"--model {{ params.model_output }} "
+        f"{job_name}",
+    ]
 
-        # 准备资源、volume
-        serving_volumes = basic_volumes.copy()
-        serving_volumes.append(get_dshm_volume(2))
-        serving_env_vars = basic_env_vars.copy()
+    # 准备资源、volume
+    serving_volumes = basic_volumes.copy()
+    serving_volumes.append(get_dshm_volume(2))
+    serving_env_vars = basic_env_vars.copy()
 
-        # 创建 Serving Pod 任务
-        serving_task = KubernetesPodOperator(
-            task_id="serving_task",
-            namespace="airflow",
-            image="hub.anuttacon.com/infra/quant:20241231",
-            cmds=["python3"],  # 主容器的启动命令
-            arguments=serving_create_args,
-            container_resources=resources_cheap,
-            volumes=serving_volumes,
-            volume_mounts=volume_mounts,
-            env_vars=serving_env_vars,
-            get_logs=True,
-            is_delete_operator_pod=True,
-            in_cluster=True,
-            startup_timeout_seconds=1200,
-            do_xcom_push=False,
-        )
-        # 如果 serving_gpus != 0, 我们就把 start -> serving_task
-        start >> serving_task
-
-    else:
-        # 否则 serving_gpus == 0，就只执行量化任务
-        start >> quant_task
+    # 创建 Serving Pod 任务
+    serving_task = KubernetesPodOperator(
+        task_id="serving_task",
+        namespace="airflow",
+        image="hub.anuttacon.com/infra/quant:20241231",
+        cmds=["python3"],  # 主容器的启动命令
+        arguments=serving_create_args,
+        container_resources=resources_cheap,
+        volumes=serving_volumes,
+        volume_mounts=volume_mounts,
+        env_vars=serving_env_vars,
+        get_logs=True,
+        is_delete_operator_pod=True,
+        in_cluster=True,
+        startup_timeout_seconds=1200,
+        do_xcom_push=False,
+    )
+    # 如果 serving_gpus != 0, 我们就把 start -> serving_task
+    start >> serving_task
