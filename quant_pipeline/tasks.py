@@ -1,0 +1,361 @@
+from datetime import datetime, timedelta
+from airflow import DAG
+from airflow.operators.empty import EmptyOperator
+from airflow.models.param import Param
+from airflow.providers.cncf.kubernetes.operators.kubernetes_pod import KubernetesPodOperator
+import uuid
+from kubernetes.client import models as k8s
+
+default_args = {
+    "owner": "quant",
+    "depends_on_past": False,
+    "email_on_failure": False,
+    "email_on_retry": False,
+    "retries": 1,
+    "retry_delay": timedelta(minutes=5),
+}
+
+with DAG(
+    dag_id="quant_pipeline",
+    default_args=default_args,
+    schedule=None,  # 不自动调度，只能手动触发
+    start_date=datetime(2025, 1, 1),
+    catchup=False,
+    params={
+        'model_input': Param(
+            default='/mnt/share/ocean/ocean3.1-2.8',
+            type='string',
+            description='Path to input model'
+        ),
+        'model_output': Param(
+            default='/mnt/share/ocean/output/quant/',
+            type='string',
+            description='Path to save quant model'
+        ),
+        'scheme': Param(
+            default='FP8_DYNAMIC',
+            enum=['FP8_DYNAMIC','INT8_STATIC'],
+            description='Quant scheme'
+        ),
+        'serving_gpus': Param(
+            default=0,
+            enum=[0, 2, 4, 8],
+            description='Number of GPUs for serving (0=no serving, 2/4/8=deploy serving)'
+        ),
+    },
+    tags=["test"],
+) as dag:
+
+    start = EmptyOperator(task_id="start")
+
+    # 打印一下传参，便于观察
+    print("params:", dag.params)
+
+    def get_dshm_volume(gpu_count):
+        """
+        按照 GPU 数量，动态生成 dshm volume 大小。
+        注意：此处只是示例，你可以根据实际需要调整公式。
+        """
+        if gpu_count <= 0:
+            gpu_count = 2  # 避免出现 0 时计算问题，这里做个保护（或自行处理）
+        base_size = 256  # 基础大小（2 GPUs 对应 256Gi）
+        factor = gpu_count / 2
+        size_gi = int(base_size * factor)
+        return k8s.V1Volume(
+            name="dshm",
+            empty_dir=k8s.V1EmptyDirVolumeSource(
+                medium="Memory",
+                size_limit=f"{size_gi}Gi",
+            ),
+        )
+
+    # ---------------------
+    # 公共环境变量
+    # ---------------------
+    basic_env_vars = [
+        k8s.V1EnvVar(name="MLP_CLUSTER", value="va"),
+        k8s.V1EnvVar(name="MLP_PROJECT", value="llm"),
+        k8s.V1EnvVar(name="MLP_USER", value="xuguang.zhao"),
+        k8s.V1EnvVar(name="NCCL_DEBUG", value="WARN"),
+        k8s.V1EnvVar(name="NCCL_SOCKET_IFNAME", value="eth0"),
+        k8s.V1EnvVar(name="NCCL_IB_QPS_PER_CONNECTION", value="4"),
+        k8s.V1EnvVar(name="TORCH_CPP_LOG_LEVEL", value="INFO"),
+        k8s.V1EnvVar(name="TORCH_DISTRIBUTED_DEBUG", value="INFO"),
+        k8s.V1EnvVar(name="RAY_COLOR_PREFIX", value="0"),
+        k8s.V1EnvVar(name="PYTHONUNBUFFERED", value="1"),
+        k8s.V1EnvVar(name="MASTER_PORT", value="23456"),
+        k8s.V1EnvVar(name="PET_MASTER_PORT", value="23456"),
+        k8s.V1EnvVar(name="MASTER_ADDR", value="localhost"),
+        k8s.V1EnvVar(name="PET_MASTER_ADDR", value="localhost"),
+        k8s.V1EnvVar(name="RANK", value="0"),
+        k8s.V1EnvVar(name="NODE_RANK", value="0"),
+        k8s.V1EnvVar(name="PET_NODE_RANK", value="0"),
+        k8s.V1EnvVar(name="PET_NNODES", value="1"),
+    ]
+
+    # ---------------------
+    # 资源定义 (2, 4, 8 GPUs)
+    # ---------------------
+    resources_2gpu = k8s.V1ResourceRequirements(
+        limits={
+            "cpu": "53200m",
+            "memory": "498073Mi",
+            "nvidia.com/gpu": "2",
+            "nvidia.com/rdma0": "1",
+            "nvidia.com/rdma1": "1",
+        },
+        requests={
+            "cpu": "50400m",
+            "memory": "471859Mi",
+            "nvidia.com/gpu": "2",
+            "nvidia.com/rdma0": "1",
+            "nvidia.com/rdma1": "1",
+        }
+    )
+
+    resources_4gpu = k8s.V1ResourceRequirements(
+        limits={
+            "cpu": "106400m",
+            "memory": "996147Mi",
+            "nvidia.com/gpu": "4",
+            "nvidia.com/rdma0": "1",
+            "nvidia.com/rdma1": "1",
+            "nvidia.com/rdma2": "1",
+            "nvidia.com/rdma3": "1",
+        },
+        requests={
+            "cpu": "100800m",
+            "memory": "943718Mi",
+            "nvidia.com/gpu": "4",
+            "nvidia.com/rdma0": "1",
+            "nvidia.com/rdma1": "1",
+            "nvidia.com/rdma2": "1",
+            "nvidia.com/rdma3": "1",
+        }
+    )
+
+    resources_8gpu = k8s.V1ResourceRequirements(
+        limits={
+            "cpu": "212800m",
+            "memory": "1992294Mi",
+            "nvidia.com/gpu": "8",
+            "nvidia.com/rdma0": "1",
+            "nvidia.com/rdma1": "1",
+            "nvidia.com/rdma2": "1",
+            "nvidia.com/rdma3": "1",
+            "nvidia.com/rdma4": "1",
+            "nvidia.com/rdma5": "1",
+            "nvidia.com/rdma6": "1",
+            "nvidia.com/rdma7": "1",
+        },
+        requests={
+            "cpu": "201600m",
+            "memory": "1887436Mi",
+            "nvidia.com/gpu": "8",
+            "nvidia.com/rdma0": "1",
+            "nvidia.com/rdma1": "1",
+            "nvidia.com/rdma2": "1",
+            "nvidia.com/rdma3": "1",
+            "nvidia.com/rdma4": "1",
+            "nvidia.com/rdma5": "1",
+            "nvidia.com/rdma6": "1",
+            "nvidia.com/rdma7": "1",
+        }
+    )
+
+    # ---------------------
+    # Volume & Mounts
+    # ---------------------
+    basic_volumes = [
+        k8s.V1Volume(
+            name="host-path-share",
+            host_path=k8s.V1HostPathVolumeSource(
+                path="/mnt/ddnfs01/share",
+                type="Directory",
+            ),
+        ),
+        k8s.V1Volume(
+            name="host-path-project",
+            host_path=k8s.V1HostPathVolumeSource(
+                path="/mnt/ddnfs01/project/project-llm",
+                type="Directory",
+            ),
+        ),
+        k8s.V1Volume(
+            name="host-path-personal",
+            host_path=k8s.V1HostPathVolumeSource(
+                path="/mnt/ddnfs01/personal/xuguang.zhao",
+                type="Directory",
+            ),
+        ),
+        k8s.V1Volume(
+            name="git-volume",
+            empty_dir=k8s.V1EmptyDirVolumeSource(),
+        ),
+        k8s.V1Volume(
+            name="kube-api-access-jbzsf",
+            projected=k8s.V1ProjectedVolumeSource(
+                sources=[
+                    k8s.V1VolumeProjection(
+                        service_account_token=k8s.V1ServiceAccountTokenProjection(
+                            expiration_seconds=3607,
+                            path="token",
+                        )
+                    ),
+                ]
+            )
+        )
+    ]
+
+    volume_mounts = [
+        k8s.V1VolumeMount(name="host-path-share", mount_path="/mnt/share"),
+        k8s.V1VolumeMount(name="host-path-project", mount_path="/mnt/project"),
+        k8s.V1VolumeMount(name="host-path-personal", mount_path="/mnt/personal"),
+        k8s.V1VolumeMount(
+            name="kube-api-access-jbzsf",
+            mount_path="/var/run/secrets/kubernetes.io/serviceaccount",
+            read_only=True,
+        ),
+        k8s.V1VolumeMount(name="git-volume", mount_path="/opt/scripts"),
+    ]
+
+    # ---------------------
+    # 量化任务 (quant_task)
+    # ---------------------
+    # 主容器命令与参数
+    quant_main_cmds = ["python3"]
+    quant_main_args = [
+        "/mnt/project/llm/users/xug/code/Ocean/users/xuguang/quant/ptq/hf_model_quant.py",
+        "--model_id", "{{ params.model_input }}",
+        "--save_dir", "{{ params.model_output }}",
+        "--scheme",   "{{ params.scheme }}"
+    ]
+
+    # 环境变量
+    quant_env_vars = basic_env_vars.copy()
+    quant_env_vars.extend([
+        k8s.V1EnvVar(name="WORLD_SIZE", value="8"),
+        k8s.V1EnvVar(name="PET_NPROC_PER_NODE", value="8"),
+        k8s.V1EnvVar(name="CUDA_VISIBLE_DEVICES", value="0"),
+    ])
+
+    quant_volumes = basic_volumes.copy()
+    # 这里硬编码了 8个GPU 的场景，因为原先代码是这样写的
+    quant_volumes.append(get_dshm_volume(8))
+
+    quant_task = KubernetesPodOperator(
+        task_id="quant_task",
+        namespace="airflow",
+        image="hub.anuttacon.com/infra/quant:20241231",
+        cmds=quant_main_cmds,
+        arguments=quant_main_args,
+        container_resources=resources_8gpu,
+        volumes=quant_volumes,
+        volume_mounts=volume_mounts,
+        env_vars=quant_env_vars,
+        get_logs=True,
+        startup_timeout_seconds=600,
+        is_delete_operator_pod=True,  # 是否结束后删除 Pod
+        in_cluster=True,
+        do_xcom_push=False,
+    )
+
+    # ---------------------
+    # Serving 相关
+    # ---------------------
+
+    # 读取 Airflow params 中的 serving_gpus
+    serving_gpus = dag.params["serving_gpus"]  # int, 0/2/4/8
+
+    # 如果需要把 GPU 数量 -> CPU/Memory
+    cpu_resource_per_gpu = {
+        2: "53",
+        4: "106",
+        8: "224",
+    }
+    mem_resource_per_gpu = {
+        2: "500",   # MB? Gi? 仅示例
+        4: "1000",
+        8: "2000",
+    }
+
+    # 根据 GPU 数量选择对应的 K8S 资源
+    def pick_serving_resource(gpu_count):
+        if gpu_count == 2:
+            return resources_2gpu
+        elif gpu_count == 4:
+            return resources_4gpu
+        elif gpu_count == 8:
+            return resources_8gpu
+        else:
+            # 若为 0 或其它情况，你也可以 return None
+            return None
+
+    # 只有在 serving_gpus != 0 时，才会创建 Serving Pod
+    if serving_gpus != 0:
+        # 准备一些必要变量
+        job_name = f"quant_pipeline_serving_{str(uuid.uuid4())[:8]}"
+
+        # 根据 serving_gpus 做 CPU、Memory 映射
+        cpu_val = cpu_resource_per_gpu[serving_gpus]
+        mem_val = mem_resource_per_gpu[serving_gpus]
+
+        # 生成 arguments
+        # 这里注意 "--command" 不再用 Jinja 读 GPU，直接用 Python 拼接
+        # 但对 model_output 依然保留 "{{ params.model_output }}" 给 Airflow 渲染
+        serving_create_args = [
+            "/mnt/project/llm/users/xug/code/Ocean/users/xuguang/quant/serving/serving_create.py",
+            "--url", "https://va-mlp.anuttacon.com/api",
+            "--project_id", "llm", 
+            "--serving_name", job_name,
+            "--serving_port", "6002",
+            "--ingress_domain", "serving.va-mlp.anuttacon.com",
+            "--serving_endpoint", f"http://{job_name}.serving.va-mlp.anuttacon.com",
+            "--cpu", cpu_val,
+            "--memory", mem_val,
+            "--gpu", str(serving_gpus),
+            "--gpu_type", "NVIDIA-H100-80GB-HBM3",
+            "--command", (
+                "python3 -m vllm.entrypoints.openai.api_server "
+                f"--model {{ params.model_output }} "
+                "--port 6002 "
+                "--max-model-len 10240 "
+                f"--tensor-parallel-size {serving_gpus} "
+                "--gpu_memory_utilization 0.9"
+            ),
+            "--container_name", job_name,
+            "--image_repository_id", "repository-ij5zby9vpu",
+            "--image_tag", "customized-v0.6.4",
+            "--description", "for evaluation pipeline use"
+        ]
+
+        # 准备资源、volume
+        serving_resource = pick_serving_resource(serving_gpus)
+        serving_volumes = basic_volumes.copy()
+        serving_volumes.append(get_dshm_volume(serving_gpus))
+
+        serving_env_vars = basic_env_vars.copy()
+
+        # 创建 Serving Pod 任务
+        serving_task = KubernetesPodOperator(
+            task_id="serving_task",
+            namespace="airflow",
+            image="hub.anuttacon.com/infra/quant:20241231",
+            cmds=["python3"],  # 主容器的启动命令
+            arguments=serving_create_args,
+            container_resources=serving_resource,
+            volumes=serving_volumes,
+            volume_mounts=volume_mounts,
+            env_vars=serving_env_vars,
+            get_logs=True,
+            is_delete_operator_pod=True,
+            in_cluster=True,
+            startup_timeout_seconds=600,
+            do_xcom_push=False,
+        )
+        # 如果 serving_gpus != 0, 我们就把 start -> serving_task
+        start >> serving_task
+
+    else:
+        # 否则 serving_gpus == 0，就只执行量化任务
+        start >> quant_task
