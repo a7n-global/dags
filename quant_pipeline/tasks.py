@@ -280,9 +280,9 @@ with DAG(
             "--serving_port", "6002",
             "--ingress_domain", "serving.va-mlp.anuttacon.com",
             "--serving_endpoint", f"http://{job_name}.serving.va-mlp.anuttacon.com",
-            "--cpu", 224,
-            "--memory", 2000,
-            "--gpu", 8,
+            "--cpu", "224",
+            "--memory", "2000",
+            "--gpu", "8",
             "--gpu_type", "NVIDIA-H100-80GB-HBM3",
             "--command", (
                 "python3 -m vllm.entrypoints.openai.api_server "
