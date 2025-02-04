@@ -259,7 +259,7 @@ with DAG(
         task_id="serving_task",
         namespace="airflow",
         image="hub.anuttacon.com/infra/quant:20241231",
-        cmds=["python3"],  # 主容器的启动命令
+        cmds=["/bin/bash"],  # 主容器的启动命令
         arguments=serving_create_args,
         container_resources=resources_cheap,
         volumes=serving_volumes,
