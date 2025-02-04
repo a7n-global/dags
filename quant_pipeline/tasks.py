@@ -264,41 +264,10 @@ with DAG(
     # Serving 相关
     # ---------------------
 
-    # 读取 Airflow params 中的 serving_gpus
-    serving_gpus = dag.params["serving_gpus"]  # int, 0/2/4/8
-
-    # 如果需要把 GPU 数量 -> CPU/Memory
-    cpu_resource_per_gpu = {
-        2: "53",
-        4: "106",
-        8: "224",
-    }
-    mem_resource_per_gpu = {
-        2: "500",   # MB? Gi? 仅示例
-        4: "1000",
-        8: "2000",
-    }
-
-    # 根据 GPU 数量选择对应的 K8S 资源
-    def pick_serving_resource(gpu_count):
-        if gpu_count == 2:
-            return resources_2gpu
-        elif gpu_count == 4:
-            return resources_4gpu
-        elif gpu_count == 8:
-            return resources_8gpu
-        else:
-            # 若为 0 或其它情况，你也可以 return None
-            return None
-
     # 只有在 serving_gpus != 0 时，才会创建 Serving Pod
-    if serving_gpus != 0:
+    if "{{ params.serving_gpus }}" != "0":
         # 准备一些必要变量
         job_name = f"quant_pipeline_serving_{str(uuid.uuid4())[:8]}"
-
-        # 根据 serving_gpus 做 CPU、Memory 映射
-        cpu_val = cpu_resource_per_gpu[serving_gpus]
-        mem_val = mem_resource_per_gpu[serving_gpus]
 
         # 生成 arguments
         # 这里注意 "--command" 不再用 Jinja 读 GPU，直接用 Python 拼接
@@ -311,16 +280,16 @@ with DAG(
             "--serving_port", "6002",
             "--ingress_domain", "serving.va-mlp.anuttacon.com",
             "--serving_endpoint", f"http://{job_name}.serving.va-mlp.anuttacon.com",
-            "--cpu", cpu_val,
-            "--memory", mem_val,
-            "--gpu", str(serving_gpus),
+            "--cpu", 224,
+            "--memory", 2000,
+            "--gpu", 8,
             "--gpu_type", "NVIDIA-H100-80GB-HBM3",
             "--command", (
                 "python3 -m vllm.entrypoints.openai.api_server "
                 f"--model {{ params.model_output }} "
                 "--port 6002 "
                 "--max-model-len 10240 "
-                f"--tensor-parallel-size {serving_gpus} "
+                f"--tensor-parallel-size 8 "
                 "--gpu_memory_utilization 0.9"
             ),
             "--container_name", job_name,
@@ -330,10 +299,8 @@ with DAG(
         ]
 
         # 准备资源、volume
-        serving_resource = pick_serving_resource(serving_gpus)
         serving_volumes = basic_volumes.copy()
-        serving_volumes.append(get_dshm_volume(serving_gpus))
-
+        serving_volumes.append(get_dshm_volume(8))
         serving_env_vars = basic_env_vars.copy()
 
         # 创建 Serving Pod 任务
@@ -343,7 +310,7 @@ with DAG(
             image="hub.anuttacon.com/infra/quant:20241231",
             cmds=["python3"],  # 主容器的启动命令
             arguments=serving_create_args,
-            container_resources=serving_resource,
+            container_resources=resources_8gpu,
             volumes=serving_volumes,
             volume_mounts=volume_mounts,
             env_vars=serving_env_vars,
