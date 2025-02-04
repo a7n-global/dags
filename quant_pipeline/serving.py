@@ -228,7 +228,7 @@ with DAG(
     # 但对 model_output 依然保留 "{{ params.model_output }}" 给 Airflow 渲染
     serving_create_args = [
         "/mnt/project/llm/users/xug/code/Ocean/users/xuguang/quant/airflow_serving_startup.sh",
-        f"{{ params.model_output }}",
+        "{{ params.model_output }}",
         job_name,
     ]
 
