@@ -256,8 +256,7 @@ with DAG(
     # ---------------------
 
     # 准备一些必要变量
-    #job_name = f"quant-pipeline-serving-{str(uuid.uuid4())[:8]}"
-    job_name = "quant-pipeline-serving-7c826ff5"
+    job_name = f"quant-pipeline-serving-{str(uuid.uuid4())[:8]}"
 
     # 生成 arguments
     # 这里注意 "--command" 不再用 Jinja 读 GPU，直接用 Python 拼接
@@ -369,4 +368,4 @@ with DAG(
         do_xcom_push=False,
     )
 
-    start >> rm_score_task >> evaluate_last_turn_loss_task >> evaluate_vllm_output_loss_task  >> quant_task >> serving_task
+    start >> quant_task >> serving_task >>  evaluate_last_turn_loss_task >> evaluate_vllm_output_loss_task >> rm_score_task
