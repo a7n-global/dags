@@ -256,8 +256,8 @@ with DAG(
     # ---------------------
 
     # 准备一些必要变量
-    job_name = f"quant-pipeline-serving-{str(uuid.uuid4())[:8]}"
-
+    #job_name = f"quant-pipeline-serving-{str(uuid.uuid4())[:8]}"
+    job_name = "quant-pipeline-serving-33b247a2"
     # 生成 arguments
     # 这里注意 "--command" 不再用 Jinja 读 GPU，直接用 Python 拼接
     # 但对 model_output 依然保留 "{{ params.model_output }}" 给 Airflow 渲染
