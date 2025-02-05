@@ -255,29 +255,22 @@ with DAG(
     # Serving 相关
     # ---------------------
 
-    # 准备一些必要变量
-    #job_name = f"quant-pipeline-serving-{str(uuid.uuid4())[:8]}"
-    job_name = "quant-pipeline-serving-33b247a2"
-    # 生成 arguments
-    # 这里注意 "--command" 不再用 Jinja 读 GPU，直接用 Python 拼接
-    # 但对 model_output 依然保留 "{{ params.model_output }}" 给 Airflow 渲染
+    job_name = f"quant-pipeline-serving-{str(uuid.uuid4())[:8]}"
     serving_create_args = [
         "/mnt/project/llm/users/xug/code/Ocean/users/xuguang/quant/airflow_pipeline/airflow_serving_startup.sh",
         "{{ params.model_output }}",
         job_name,
     ]
 
-    # 准备资源、volume
     serving_volumes = basic_volumes.copy()
     serving_volumes.append(get_dshm_volume(2))
     serving_env_vars = basic_env_vars.copy()
 
-    # 创建 Serving Pod 任务
     serving_task = KubernetesPodOperator(
         task_id="serving_task",
         namespace="airflow",
         image="hub.anuttacon.com/infra/quant:20241231",
-        cmds=["/bin/bash"],  # 主容器的启动命令
+        cmds=["/bin/bash"],
         arguments=serving_create_args,
         container_resources=resources_cheap,
         volumes=serving_volumes,
@@ -299,17 +292,15 @@ with DAG(
         "--model_endpoint", f"http://{job_name}.serving.va-mlp.anuttacon.com"
     ]
 
-    #4 gpus
     evaluation_volumes = basic_volumes.copy()
     evaluation_volumes.append(get_dshm_volume(4))
     evaluation_task_env_vars = basic_env_vars.copy()
 
-    # 创建 Serving Pod 任务
     evaluate_last_turn_loss_task = KubernetesPodOperator(
         task_id="evaluate_last_turn_loss_task",
         namespace="airflow",
         image="hub.anuttacon.com/infra/quant:20241231",
-        cmds=["python3"],  # 主容器的启动命令
+        cmds=["python3"],
         arguments=evaluation_last_turn_loss_create_args,
         container_resources=resources_4gpu,
         volumes=evaluation_volumes,
@@ -332,7 +323,7 @@ with DAG(
         task_id="evaluate_vllm_output_loss_task",
         namespace="airflow",
         image="hub.anuttacon.com/infra/quant:20241231",
-        cmds=["python3"],  # 主容器的启动命令
+        cmds=["python3"],
         arguments=evaluate_vllm_output_loss_create_args,
         container_resources=resources_4gpu,
         volumes=evaluation_volumes,
@@ -355,7 +346,7 @@ with DAG(
         task_id="rm_score_task",
         namespace="airflow",
         image="hub.anuttacon.com/infra/quant:20241231",
-        cmds=["/bin/bash"],  # 主容器的启动命令
+        cmds=["/bin/bash"],
         arguments=rm_score_task_create_args,
         container_resources=resources_cheap,
         volumes=evaluation_volumes,
@@ -368,4 +359,4 @@ with DAG(
         do_xcom_push=False,
     )
 
-    start >> evaluate_last_turn_loss_task >> evaluate_vllm_output_loss_task >> quant_task >> serving_task  >> rm_score_task
+    start >> quant_task >> serving_task  >>evaluate_last_turn_loss_task >> evaluate_vllm_output_loss_task >> rm_score_task
