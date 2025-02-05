@@ -16,7 +16,7 @@ default_args = {
 }
 
 with DAG(
-    dag_id="405b_quant_pipeline",
+    dag_id="only_quant_pipeline",
     default_args=default_args,
     schedule=None,  # 不自动调度，只能手动触发
     start_date=datetime(2025, 1, 1),
