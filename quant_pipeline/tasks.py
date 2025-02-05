@@ -310,7 +310,7 @@ with DAG(
         task_id="evaluate_last_turn_loss_task",
         namespace="airflow",
         image="hub.anuttacon.com/infra/quant:20241231",
-        cmds=["python"],  # 主容器的启动命令
+        cmds=["python3"],  # 主容器的启动命令
         arguments=evaluation_last_turn_loss_create_args,
         container_resources=resources_4gpu,
         volumes=evaluation_volumes,
@@ -333,7 +333,7 @@ with DAG(
         task_id="evaluate_vllm_output_loss_task",
         namespace="airflow",
         image="hub.anuttacon.com/infra/quant:20241231",
-        cmds=["python"],  # 主容器的启动命令
+        cmds=["python3"],  # 主容器的启动命令
         arguments=evaluate_vllm_output_loss_create_args,
         container_resources=resources_4gpu,
         volumes=evaluation_volumes,
