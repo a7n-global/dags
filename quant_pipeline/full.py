@@ -368,4 +368,4 @@ with DAG(
         do_xcom_push=False,
     )
 
-    start >> quant_task >> serving_task >>  evaluate_last_turn_loss_task >> evaluate_vllm_output_loss_task >> rm_score_task
+    start >> evaluate_last_turn_loss_task >> evaluate_vllm_output_loss_task >> quant_task >> serving_task  >> rm_score_task
