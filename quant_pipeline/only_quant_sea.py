@@ -79,105 +79,20 @@ with DAG(
         k8s.V1EnvVar(name="PET_NODE_RANK", value="0"),
         k8s.V1EnvVar(name="PET_NNODES", value="1"),
     ]
-    resources_2gpu = k8s.V1ResourceRequirements(
-        limits={
-            "cpu": "53200m",          # 212800 / 4
-            "memory": "498073Mi",     # 1992294 / 4
-            "nvidia.com/gpu": "2",
-            "nvidia.com/rdma0": "1",
-            "nvidia.com/rdma1": "1",
-        },
-        requests={
-            "cpu": "50400m",          # 201600 / 4
-            "memory": "471859Mi",     # 1887436 / 4
-            "nvidia.com/gpu": "2",
-            "nvidia.com/rdma0": "1",
-            "nvidia.com/rdma1": "1",
-        }
-    )
-
-    # 4 GPUs
-    resources_4gpu = k8s.V1ResourceRequirements(
-        limits={
-            "cpu": "106400m",         # 212800 / 2
-            "memory": "996147Mi",     # 1992294 / 2
-            "nvidia.com/gpu": "4",
-            "nvidia.com/rdma0": "1",
-            "nvidia.com/rdma1": "1",
-            "nvidia.com/rdma2": "1",
-            "nvidia.com/rdma3": "1",
-        },
-        requests={
-            "cpu": "100800m",         # 201600 / 2
-            "memory": "943718Mi",     # 1887436 / 2
-            "nvidia.com/gpu": "4",
-            "nvidia.com/rdma0": "1",
-            "nvidia.com/rdma1": "1",
-            "nvidia.com/rdma2": "1",
-            "nvidia.com/rdma3": "1",
-        }
-    )
 
     # 8 GPUs (原始配置)
     resources_8gpu = k8s.V1ResourceRequirements(
         limits={
-            "cpu": "212800m",
-            "memory": "1992294Mi",
+            "cpu": "182400m",
+            "memory": "1692294Mi",
             "nvidia.com/gpu": "8",
-            "nvidia.com/rdma0": "1",
-            "nvidia.com/rdma1": "1",
-            "nvidia.com/rdma2": "1",
-            "nvidia.com/rdma3": "1",
-            "nvidia.com/rdma4": "1",
-            "nvidia.com/rdma5": "1",
-            "nvidia.com/rdma6": "1",
-            "nvidia.com/rdma7": "1",
         },
         requests={
-            "cpu": "201600m",
-            "memory": "1887436Mi",
+            "cpu": "182400m",
+            "memory": "1687436Mi",
             "nvidia.com/gpu": "8",
-            "nvidia.com/rdma0": "1",
-            "nvidia.com/rdma1": "1",
-            "nvidia.com/rdma2": "1",
-            "nvidia.com/rdma3": "1",
-            "nvidia.com/rdma4": "1",
-            "nvidia.com/rdma5": "1",
-            "nvidia.com/rdma6": "1",
-            "nvidia.com/rdma7": "1",
         }
     )
-
-    # 资源限制
-    container_resources = k8s.V1ResourceRequirements(
-        limits={
-            "cpu": "212800m",
-            "memory": "1992294Mi",
-            "nvidia.com/gpu": "8",
-            "nvidia.com/rdma0": "1",
-            "nvidia.com/rdma1": "1",
-            "nvidia.com/rdma2": "1",
-            "nvidia.com/rdma3": "1",
-            "nvidia.com/rdma4": "1",
-            "nvidia.com/rdma5": "1",
-            "nvidia.com/rdma6": "1",
-            "nvidia.com/rdma7": "1",
-        },
-        requests={
-            "cpu": "201600m",
-            "memory": "1887436Mi",
-            "nvidia.com/gpu": "8",
-            "nvidia.com/rdma0": "1",
-            "nvidia.com/rdma1": "1",
-            "nvidia.com/rdma2": "1",
-            "nvidia.com/rdma3": "1",
-            "nvidia.com/rdma4": "1",
-            "nvidia.com/rdma5": "1",
-            "nvidia.com/rdma6": "1",
-            "nvidia.com/rdma7": "1",
-        },
-    )
-
     # Volumes
     basic_volumes = [
         k8s.V1Volume(
@@ -240,13 +155,13 @@ with DAG(
         ])
     quant_volumes = basic_volumes.copy()
     quant_volumes.append(
-        get_dshm_volume(int(8))
+        get_dshm_volume(int(4))
     )
     # KubernetesPodOperator
     quant_task = KubernetesPodOperator(
         task_id="quant_task",
         namespace="airflow",
-        image="hub.anuttacon.com/infra/quant:20241231",
+        image="sea-hub.shiyak-office.com/infra/quant:20241231",
         cmds=quant_main_cmds,
         arguments=quant_main_args,
         container_resources=resources_8gpu,
