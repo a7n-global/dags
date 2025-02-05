@@ -93,9 +93,6 @@ with DAG(
         k8s.V1EnvVar(name="PET_NNODES", value="1"),
     ]
 
-    # ---------------------
-    # 资源定义 (2, 4, 8 GPUs)
-    # ---------------------
     resources_cheap = k8s.V1ResourceRequirements(
         limits={
             "cpu": "23200m",
@@ -104,6 +101,28 @@ with DAG(
         requests={
             "cpu": "23200m",
             "memory": "228073Mi",
+        }
+    )
+
+    # 4 GPUs
+    resources_4gpu = k8s.V1ResourceRequirements(
+        limits={
+            "cpu": "106400m",         # 212800 / 2
+            "memory": "996147Mi",     # 1992294 / 2
+            "nvidia.com/gpu": "4",
+            "nvidia.com/rdma0": "1",
+            "nvidia.com/rdma1": "1",
+            "nvidia.com/rdma2": "1",
+            "nvidia.com/rdma3": "1",
+        },
+        requests={
+            "cpu": "100800m",         # 201600 / 2
+            "memory": "943718Mi",     # 1887436 / 2
+            "nvidia.com/gpu": "4",
+            "nvidia.com/rdma0": "1",
+            "nvidia.com/rdma1": "1",
+            "nvidia.com/rdma2": "1",
+            "nvidia.com/rdma3": "1",
         }
     )
 
@@ -213,7 +232,6 @@ with DAG(
     ])
 
     quant_volumes = basic_volumes.copy()
-    # 这里硬编码了 8个GPU 的场景，因为原先代码是这样写的
     quant_volumes.append(get_dshm_volume(8))
 
     quant_task = KubernetesPodOperator(
@@ -238,7 +256,8 @@ with DAG(
     # ---------------------
 
     # 准备一些必要变量
-    job_name = f"quant-pipeline-serving-{str(uuid.uuid4())[:8]}"
+    #job_name = f"quant-pipeline-serving-{str(uuid.uuid4())[:8]}"
+    job_name = "quant-pipeline-serving-7c826ff5"
 
     # 生成 arguments
     # 这里注意 "--command" 不再用 Jinja 读 GPU，直接用 Python 拼接
@@ -271,5 +290,83 @@ with DAG(
         startup_timeout_seconds=1200,
         do_xcom_push=False,
     )
-    # 如果 serving_gpus != 0, 我们就把 start -> serving_task
-    start >> quant_task >> serving_task
+
+    # ---------------------
+    # Evaluation 相关
+    # ---------------------
+    evaluation_last_turn_loss_create_args = [
+        "/mnt/project/llm/users/xug/code/Ocean/users/xuguang/quant/evaluate_last_turn_loss.py",
+        "--model_path", "{{ params.model_output }}",
+        "--model_endpoint", f"http://{job_name}.serving.va-mlp.anuttacon.com"
+    ]
+
+    #4 gpus
+    evaluation_volumes = basic_volumes.copy()
+    evaluation_volumes.append(get_dshm_volume(4))
+    evaluation_task_env_vars = basic_env_vars.copy()
+
+    # 创建 Serving Pod 任务
+    evaluate_last_turn_loss_task = KubernetesPodOperator(
+        task_id="evluation_las_turn_task",
+        namespace="airflow",
+        image="hub.anuttacon.com/infra/quant:20241231",
+        cmds=["python"],  # 主容器的启动命令
+        arguments=evaluation_last_turn_loss_create_args,
+        container_resources=resources_4gpu,
+        volumes=evaluation_volumes,
+        volume_mounts=volume_mounts,
+        env_vars=evaluation_task_env_vars,
+        get_logs=True,
+        is_delete_operator_pod=True,
+        in_cluster=True,
+        startup_timeout_seconds=1200,
+        do_xcom_push=False,
+    )
+
+    evaluate_vllm_output_loss_create_args = [
+        "/mnt/project/llm/users/xug/code/Ocean/users/xuguang/quant/evaluate_vllm_output_loss.py",
+        "--model_path", "{{ params.model_output }}",
+        "--model_endpoint", f"http://{job_name}.serving.va-mlp.anuttacon.com"
+    ]
+
+    evaluate_vllm_output_loss_task = KubernetesPodOperator(
+        task_id="evluation_las_turn_task",
+        namespace="airflow",
+        image="hub.anuttacon.com/infra/quant:20241231",
+        cmds=["python"],  # 主容器的启动命令
+        arguments=evaluate_vllm_output_loss_create_args,
+        container_resources=resources_4gpu,
+        volumes=evaluation_volumes,
+        volume_mounts=volume_mounts,
+        env_vars=evaluation_task_env_vars,
+        get_logs=True,
+        is_delete_operator_pod=True,
+        in_cluster=True,
+        startup_timeout_seconds=1200,
+        do_xcom_push=False,
+    )
+
+    rm_score_task_create_args = [
+        "/mnt/project/llm/users/xug/code/Ocean/users/xuguang/quant/airflow_rm_scores.sh",
+        "{{ params.model_output }}",
+        job_name,
+    ]
+
+    rm_score_task = KubernetesPodOperator(
+        task_id="rm_score_task",
+        namespace="airflow",
+        image="hub.anuttacon.com/infra/quant:20241231",
+        cmds=["/bin/bash"],  # 主容器的启动命令
+        arguments=rm_score_task_create_args,
+        container_resources=resources_cheap,
+        volumes=evaluation_volumes,
+        volume_mounts=volume_mounts,
+        env_vars=evaluation_task_env_vars,
+        get_logs=True,
+        is_delete_operator_pod=True,
+        in_cluster=True,
+        startup_timeout_seconds=1200,
+        do_xcom_push=False,
+    )
+
+    start >> evaluate_last_turn_loss_task >> evaluate_vllm_output_loss_task >> rm_score_task >> quant_task >> serving_task
