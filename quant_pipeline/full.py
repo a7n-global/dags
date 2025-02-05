@@ -42,6 +42,10 @@ with DAG(
             enum=[0, 2, 4, 8],
             description='Number of GPUs for serving (0=no serving, 2/4/8=deploy serving)'
         ),
+        'job_name': Param(
+            default="default",
+            description='Job Name'
+        ),
     },
     tags=["test"],
 ) as dag:
@@ -255,11 +259,11 @@ with DAG(
     # Serving 相关
     # ---------------------
 
-    job_name = f"quant-pipeline-serving-{str(uuid.uuid4())[:8]}"
+    #job_name = f"quant-pipeline-serving-{str(uuid.uuid4())[:8]}"
     serving_create_args = [
         "/mnt/project/llm/users/xug/code/Ocean/users/xuguang/quant/airflow_pipeline/airflow_serving_startup.sh",
         "{{ params.model_output }}",
-        job_name,
+        "{{ params.job_name }}",
     ]
 
     serving_volumes = basic_volumes.copy()
@@ -289,7 +293,7 @@ with DAG(
     evaluation_last_turn_loss_create_args = [
         "/mnt/project/llm/users/xug/code/Ocean/users/xuguang/quant/evaluate_last_turn_loss.py",
         "--model_path", "{{ params.model_output }}",
-        "--model_endpoint", f"http://{job_name}.serving.va-mlp.anuttacon.com"
+        "--model_endpoint", "http://{{ params.job_name }}.serving.va-mlp.anuttacon.com"
     ]
 
     evaluation_volumes = basic_volumes.copy()
@@ -316,7 +320,7 @@ with DAG(
     evaluate_vllm_output_loss_create_args = [
         "/mnt/project/llm/users/xug/code/Ocean/users/xuguang/quant/evaluate_vllm_output_loss.py",
         "--model_path", "{{ params.model_output }}",
-        "--model_endpoint", f"http://{job_name}.serving.va-mlp.anuttacon.com"
+        "--model_endpoint", "http://{{ params.job_name }}.serving.va-mlp.anuttacon.com"
     ]
 
     evaluate_vllm_output_loss_task = KubernetesPodOperator(
@@ -339,7 +343,7 @@ with DAG(
     rm_score_task_create_args = [
         "/mnt/project/llm/users/xug/code/Ocean/users/xuguang/quant/airflow_pipeline/airflow_rm_scores.sh",
         "{{ params.model_output }}",
-        job_name,
+        "{{ params.job_name }}",
     ]
 
     rm_score_task = KubernetesPodOperator(
