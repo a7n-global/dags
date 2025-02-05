@@ -307,7 +307,7 @@ with DAG(
 
     # 创建 Serving Pod 任务
     evaluate_last_turn_loss_task = KubernetesPodOperator(
-        task_id="evluation_las_turn_task",
+        task_id="evaluate_last_turn_loss_task",
         namespace="airflow",
         image="hub.anuttacon.com/infra/quant:20241231",
         cmds=["python"],  # 主容器的启动命令
@@ -330,7 +330,7 @@ with DAG(
     ]
 
     evaluate_vllm_output_loss_task = KubernetesPodOperator(
-        task_id="evluation_las_turn_task",
+        task_id="evaluate_vllm_output_loss_task",
         namespace="airflow",
         image="hub.anuttacon.com/infra/quant:20241231",
         cmds=["python"],  # 主容器的启动命令
