@@ -263,7 +263,7 @@ with DAG(
     # 这里注意 "--command" 不再用 Jinja 读 GPU，直接用 Python 拼接
     # 但对 model_output 依然保留 "{{ params.model_output }}" 给 Airflow 渲染
     serving_create_args = [
-        "/mnt/project/llm/users/xug/code/Ocean/users/xuguang/quant/airflow_serving_startup.sh",
+        "/mnt/project/llm/users/xug/code/Ocean/users/xuguang/quant/airflow_pipeline/airflow_serving_startup.sh",
         "{{ params.model_output }}",
         job_name,
     ]
@@ -347,7 +347,7 @@ with DAG(
     )
 
     rm_score_task_create_args = [
-        "/mnt/project/llm/users/xug/code/Ocean/users/xuguang/quant/airflow_rm_scores.sh",
+        "/mnt/project/llm/users/xug/code/Ocean/users/xuguang/quant/airflow_pipeline/airflow_rm_scores.sh",
         "{{ params.model_output }}",
         job_name,
     ]
@@ -369,4 +369,4 @@ with DAG(
         do_xcom_push=False,
     )
 
-    start >> evaluate_last_turn_loss_task >> evaluate_vllm_output_loss_task >> rm_score_task >> quant_task >> serving_task
+    start >> rm_score_task >> evaluate_last_turn_loss_task >> evaluate_vllm_output_loss_task  >> quant_task >> serving_task
