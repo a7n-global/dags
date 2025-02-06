@@ -46,6 +46,10 @@ with DAG(
             default="default",
             description='Job Name'
         ),
+        'model_size': Param(
+            default="small",
+            description='Model size'
+        ),
     },
     tags=["test"],
 ) as dag:
@@ -95,6 +99,7 @@ with DAG(
         k8s.V1EnvVar(name="NODE_RANK", value="0"),
         k8s.V1EnvVar(name="PET_NODE_RANK", value="0"),
         k8s.V1EnvVar(name="PET_NNODES", value="1"),
+        k8s.V1EnvVar(name="MODEL_SIZE", value="{{ params.model_size }}"),
     ]
 
     resources_cheap = k8s.V1ResourceRequirements(
@@ -363,4 +368,4 @@ with DAG(
         do_xcom_push=False,
     )
 
-    start >> quant_task >> serving_task  >>evaluate_last_turn_loss_task >> evaluate_vllm_output_loss_task >> rm_score_task
+    start >> serving_task >> quant_task  >>evaluate_last_turn_loss_task >> evaluate_vllm_output_loss_task >> rm_score_task
