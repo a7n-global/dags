@@ -18,7 +18,7 @@ default_args = {
 with DAG(
     dag_id="quant_pipeline",
     default_args=default_args,
-    schedule=None,  # 不自动调度，只能手动触发
+    schedule=None,
     start_date=datetime(2025, 1, 1),
     catchup=False,
     params={
@@ -56,17 +56,12 @@ with DAG(
 
     start = EmptyOperator(task_id="start")
 
-    # 打印一下传参，便于观察
     print("params:", dag.params)
 
     def get_dshm_volume(gpu_count):
-        """
-        按照 GPU 数量，动态生成 dshm volume 大小。
-        注意：此处只是示例，你可以根据实际需要调整公式。
-        """
         if gpu_count <= 0:
-            gpu_count = 2  # 避免出现 0 时计算问题，这里做个保护（或自行处理）
-        base_size = 256  # 基础大小（2 GPUs 对应 256Gi）
+            gpu_count = 2
+        base_size = 256
         factor = gpu_count / 2
         size_gi = int(base_size * factor)
         return k8s.V1Volume(
@@ -77,9 +72,6 @@ with DAG(
             ),
         )
 
-    # ---------------------
-    # 公共环境变量
-    # ---------------------
     basic_env_vars = [
         k8s.V1EnvVar(name="MLP_CLUSTER", value="va"),
         k8s.V1EnvVar(name="MLP_PROJECT", value="llm"),
@@ -164,9 +156,6 @@ with DAG(
         }
     )
 
-    # ---------------------
-    # Volume & Mounts
-    # ---------------------
     basic_volumes = [
         k8s.V1Volume(
             name="host-path-share",
@@ -220,10 +209,6 @@ with DAG(
         k8s.V1VolumeMount(name="git-volume", mount_path="/opt/scripts"),
     ]
 
-    # ---------------------
-    # 量化任务 (quant_task)
-    # ---------------------
-    # 主容器命令与参数
     quant_main_cmds = ["python3"]
     quant_main_args = [
         "/mnt/project/llm/users/xug/code/Ocean/users/xuguang/quant/ptq/hf_model_quant.py",
@@ -232,7 +217,6 @@ with DAG(
         "--scheme",   "{{ params.scheme }}"
     ]
 
-    # 环境变量
     quant_env_vars = basic_env_vars.copy()
     quant_env_vars.extend([
         k8s.V1EnvVar(name="WORLD_SIZE", value="8"),
@@ -255,16 +239,11 @@ with DAG(
         env_vars=quant_env_vars,
         get_logs=True,
         startup_timeout_seconds=600,
-        is_delete_operator_pod=True,  # 是否结束后删除 Pod
+        is_delete_operator_pod=True,
         in_cluster=True,
         do_xcom_push=False,
     )
 
-    # ---------------------
-    # Serving 相关
-    # ---------------------
-
-    #job_name = f"quant-pipeline-serving-{str(uuid.uuid4())[:8]}"
     serving_create_args = [
         "/mnt/project/llm/users/xug/code/Ocean/users/xuguang/quant/airflow_pipeline/airflow_serving_startup.sh",
         "{{ params.model_output }}",
@@ -368,6 +347,33 @@ with DAG(
         do_xcom_push=False,
     )
 
+    benchmark_task_create_args = [
+        "/quant_benchmark/benchmarks/benchmark_serving.py",
+        "--backend", "vllm",
+        "--base-url", "http://{{ params.job_name }}.serving.va-mlp.anuttacon.com"
+        "--dataset-name=sharegpt",
+        "--dataset-path", "/quant_benchmark/benchmark_data.json"
+        "--model", "{{ params.model_output }}"
+        "--seed", "12345"
+    ]
+
+    benchmark_task = KubernetesPodOperator(
+        task_id="benchmark_task",
+        namespace="airflow",
+        image="hub.anuttacon.com/infra/quant:20241231",
+        cmds=["python3"],
+        arguments=rm_score_task_create_args,
+        container_resources=resources_4gpu,
+        volumes=evaluation_volumes,
+        volume_mounts=volume_mounts,
+        env_vars=evaluation_task_env_vars,
+        get_logs=True,
+        is_delete_operator_pod=True,
+        in_cluster=True,
+        startup_timeout_seconds=1200,
+        do_xcom_push=False,
+    )
+
     cleanup_task_create_args = [
         "/mnt/project/llm/users/xug/code/Ocean/users/xuguang/quant/serving/serving_delete.py",
         "--url",
@@ -394,11 +400,9 @@ with DAG(
         trigger_rule=TriggerRule.ONE_FAILED
     )
 
-    #start >> quant_task >> serving_task >> evaluate_last_turn_loss_task >> evaluate_vllm_output_loss_task >> rm_score_task
-    # 设置线性任务依赖
-    start >> quant_task >> serving_task >> evaluate_last_turn_loss_task >> evaluate_vllm_output_loss_task >> rm_score_task
+    start >> quant_task >> serving_task >> benchmark_task >> evaluate_last_turn_loss_task >> evaluate_vllm_output_loss_task >> rm_score_task
 
-    # cleanup_task 依赖于主要任务链
     evaluate_last_turn_loss_task >> cleanup_task
     evaluate_vllm_output_loss_task >> cleanup_task
     rm_score_task >> cleanup_task
+    benchmark_task >> cleanup_task
