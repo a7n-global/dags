@@ -3,6 +3,7 @@ from airflow import DAG
 from airflow.operators.empty import EmptyOperator
 from airflow.models.param import Param
 from airflow.providers.cncf.kubernetes.operators.kubernetes_pod import KubernetesPodOperator
+from airflow.utils.trigger_rule import TriggerRule
 import uuid
 from kubernetes.client import models as k8s
 
@@ -368,4 +369,39 @@ with DAG(
         do_xcom_push=False,
     )
 
-    start >> serving_task >> quant_task  >>evaluate_last_turn_loss_task >> evaluate_vllm_output_loss_task >> rm_score_task
+    cleanup_task_create_args = [
+        "/mnt/project/llm/users/xug/code/Ocean/users/xuguang/quant/serving/serving_delete.py",
+        "--url",
+        "https://va-mlp.anuttacon.com/api",
+    ]
+
+    cleanup_task = KubernetesPodOperator(
+        task_id="cleanup_task",
+        namespace="airflow",
+        image="hub.anuttacon.com/infra/quant:20241231",
+        cmds=["python3"],
+        arguments=cleanup_task_create_args,
+        container_resources=resources_cheap,
+        volumes=evaluation_volumes,
+        volume_mounts=volume_mounts,
+        env_vars=evaluation_task_env_vars,
+        get_logs=True,
+        is_delete_operator_pod=True,
+        in_cluster=True,
+        startup_timeout_seconds=1200,
+        do_xcom_push=False,
+        trigger_rule=TriggerRule.ONE_FAILED
+    )
+
+    #start >> quant_task >> serving_task >> evaluate_last_turn_loss_task >> evaluate_vllm_output_loss_task >> rm_score_task
+    start >> quant_task >> serving_task
+
+    # 设置评估任务的依赖
+    serving_task >> evaluate_last_turn_loss_task
+    serving_task >> evaluate_vllm_output_loss_task
+    [evaluate_last_turn_loss_task, evaluate_vllm_output_loss_task] >> rm_score_task
+
+    # 添加cleanup任务的依赖
+    evaluate_last_turn_loss_task >> cleanup_task
+    evaluate_vllm_output_loss_task >> cleanup_task
+    rm_score_task >> cleanup_task
