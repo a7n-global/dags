@@ -400,7 +400,7 @@ with DAG(
         trigger_rule=TriggerRule.ONE_FAILED
     )
 
-    start >> quant_task >> serving_task >> benchmark_task >> evaluate_last_turn_loss_task >> evaluate_vllm_output_loss_task >> rm_score_task
+    start >> quant_task >> serving_task >> evaluate_last_turn_loss_task >> evaluate_vllm_output_loss_task >> rm_score_task >> benchmark_task 
 
     evaluate_last_turn_loss_task >> cleanup_task
     evaluate_vllm_output_loss_task >> cleanup_task
