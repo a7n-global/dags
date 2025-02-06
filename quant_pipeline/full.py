@@ -362,7 +362,7 @@ with DAG(
         namespace="airflow",
         image="hub.anuttacon.com/infra/quant:20241231",
         cmds=["python3"],
-        arguments=rm_score_task_create_args,
+        arguments=benchmark_task_create_args,
         container_resources=resources_4gpu,
         volumes=evaluation_volumes,
         volume_mounts=volume_mounts,
