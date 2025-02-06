@@ -373,6 +373,8 @@ with DAG(
         "/mnt/project/llm/users/xug/code/Ocean/users/xuguang/quant/serving/serving_delete.py",
         "--url",
         "https://va-mlp.anuttacon.com/api",
+        "--serving_name",
+        "{{ params.job_name }}",
     ]
 
     cleanup_task = KubernetesPodOperator(
@@ -394,14 +396,10 @@ with DAG(
     )
 
     #start >> quant_task >> serving_task >> evaluate_last_turn_loss_task >> evaluate_vllm_output_loss_task >> rm_score_task
-    start >> quant_task >> serving_task
+    # 设置线性任务依赖
+    start >> quant_task >> serving_task >> evaluate_last_turn_loss_task >> evaluate_vllm_output_loss_task >> rm_score_task
 
-    # 设置评估任务的依赖
-    serving_task >> evaluate_last_turn_loss_task
-    serving_task >> evaluate_vllm_output_loss_task
-    [evaluate_last_turn_loss_task, evaluate_vllm_output_loss_task] >> rm_score_task
-
-    # 添加cleanup任务的依赖
+    # cleanup_task 依赖于主要任务链
     evaluate_last_turn_loss_task >> cleanup_task
     evaluate_vllm_output_loss_task >> cleanup_task
     rm_score_task >> cleanup_task
