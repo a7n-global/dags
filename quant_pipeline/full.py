@@ -350,10 +350,10 @@ with DAG(
     benchmark_task_create_args = [
         "/quant_benchmark/benchmarks/benchmark_serving.py",
         "--backend", "vllm",
-        "--base-url", "http://{{ params.job_name }}.serving.va-mlp.anuttacon.com"
+        "--base-url", "http://{{ params.job_name }}.serving.va-mlp.anuttacon.com",
         "--dataset-name=sharegpt",
-        "--dataset-path", "/quant_benchmark/benchmark_data.json"
-        "--model", "{{ params.model_output }}"
+        "--dataset-path", "/quant_benchmark/benchmark_data.json",
+        "--model", "{{ params.model_output }}",
         "--seed", "12345"
     ]
 
