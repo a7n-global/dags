@@ -397,7 +397,7 @@ with DAG(
         in_cluster=True,
         startup_timeout_seconds=1200,
         do_xcom_push=False,
-        trigger_rule=TriggerRule.ONE_FAILED
+        trigger_rule=TriggerRule.ALL_DONE
     )
 
     start >> quant_task >> serving_task >> evaluate_last_turn_loss_task >> evaluate_vllm_output_loss_task >> rm_score_task >> benchmark_task 
