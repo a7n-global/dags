@@ -65,42 +65,84 @@ def check_build_status(**kwargs):
     ti = kwargs['ti']
     job_id = ti.xcom_pull(task_ids='submit_build_task', key='job_id')
     
-    max_checks = 60  # Maximum number of status checks (10 minutes with 10-second intervals)
-    check_interval = 10  # seconds
+    if not job_id:
+        raise ValueError("No job_id found from previous task")
+        
+    logging.info(f"Starting to monitor build status for job ID: {job_id}")
+    
+    max_checks = 120  # 增加检查次数，支持更长的构建时间（20分钟）
+    check_interval = 10  # 秒
     
     for i in range(max_checks):
-        logging.info(f"Checking build status for job {job_id}, attempt {i+1}/{max_checks}")
-        
-        response = requests.get(f"http://{IMAGE_BUILDER_URL}/status/{job_id}")
-        status_data = response.json()
-        
-        current_status = status_data.get('status')
-        logging.info(f"Current build status: {current_status}")
-        
-        # If build is complete or failed, break the loop
-        if current_status in ['completed', 'failed']:
-            break
+        try:
+            logging.info(f"Checking build status for job {job_id}, attempt {i+1}/{max_checks}")
             
-        # Wait before checking again
+            response = requests.get(f"http://{IMAGE_BUILDER_URL}/status/{job_id}", timeout=30)
+            
+            if response.status_code != 200:
+                logging.error(f"Received non-200 status code: {response.status_code}, response: {response.text}")
+                time.sleep(check_interval)
+                continue
+                
+            status_data = response.json()
+            current_status = status_data.get('status')
+            
+            if not current_status:
+                logging.warning(f"No status found in response: {status_data}")
+                time.sleep(check_interval)
+                continue
+                
+            logging.info(f"Current build status: {current_status}")
+            
+            # 如果构建完成或失败，跳出循环
+            if current_status in ['completed', 'failed']:
+                break
+                
+        except Exception as e:
+            logging.error(f"Error checking build status: {str(e)}")
+            # 继续检查，而不是立即失败
+        
+        # 等待下次检查
         time.sleep(check_interval)
     
-    # Final status check
-    response = requests.get(f"http://{IMAGE_BUILDER_URL}/status/{job_id}")
-    final_status = response.json()
-    
-    # Get logs
-    logs_response = requests.get(f"http://{IMAGE_BUILDER_URL}/logs/{job_id}")
-    logs_data = logs_response.json()
-    
-    # Store the results
-    ti.xcom_push(key='final_status', value=final_status)
-    ti.xcom_push(key='build_logs', value=logs_data.get('logs', ''))
-    
-    # If build failed, raise an exception
-    if final_status.get('status') == 'failed':
-        raise Exception(f"Docker build failed. Job ID: {job_id}. Check logs for details.")
-    
-    return final_status
+    # 最终状态检查
+    try:
+        logging.info(f"Performing final status check for job {job_id}")
+        response = requests.get(f"http://{IMAGE_BUILDER_URL}/status/{job_id}", timeout=30)
+        final_status = response.json()
+        
+        # 获取日志
+        try:
+            logs_response = requests.get(f"http://{IMAGE_BUILDER_URL}/logs/{job_id}", timeout=30)
+            logs_data = logs_response.json()
+            logs = logs_data.get('logs', '')
+        except Exception as e:
+            logging.error(f"Error fetching logs: {str(e)}")
+            logs = f"无法获取日志: {str(e)}"
+        
+        # 存储结果
+        ti.xcom_push(key='final_status', value=final_status)
+        ti.xcom_push(key='build_logs', value=logs)
+        
+        # 记录重要的日志片段（最后 20 行）
+        log_lines = logs.split('\n')
+        if len(log_lines) > 20:
+            logging.info(f"Last 20 lines of build logs:\n{'\n'.join(log_lines[-20:])}")
+        else:
+            logging.info(f"Complete build logs:\n{logs}")
+        
+        status = final_status.get('status')
+        if status == 'failed':
+            raise Exception(f"Docker 构建失败. 任务 ID: {job_id}. 请检查日志了解详情.")
+        elif status != 'completed':
+            raise Exception(f"构建未在预期时间内完成. 最终状态: {status}. 任务 ID: {job_id}")
+            
+        logging.info(f"Build completed successfully for job {job_id}")
+        return final_status
+        
+    except Exception as e:
+        logging.error(f"Final status check failed: {str(e)}")
+        raise
 
 with DAG(
     dag_id="docker_build_pipeline",
