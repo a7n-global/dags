@@ -49,6 +49,10 @@ def submit_build(**kwargs):
                             headers={'Content-Type': 'application/json'},
                             data=json.dumps(payload))
     
+    # Verify the response status code
+    if response.status_code != 200:
+        raise ValueError(f"Build request failed with status code {response.status_code}: {response.text}")
+    
     response_data = response.json()
     logging.info(f"Build job submission response: {response_data}")
     
@@ -70,24 +74,24 @@ def check_build_status(**kwargs):
         
     logging.info(f"Starting to monitor build status for job ID: {job_id}")
     
-    max_checks = 120  # 增加检查次数，支持更长的构建时间（20分钟）
-    check_interval = 10  # 秒
-    max_timeout = 60  # 增加最大超时时间到60秒
-    base_timeout = 30  # 初始超时设置
-    timeout_backoff_factor = 1.5  # 超时指数回退因子
+    max_checks = 120  # Increased number of checks to support longer build times (up to 20 minutes)
+    check_interval = 10  # Seconds between checks
+    max_timeout = 60  # Maximum timeout value in seconds
+    base_timeout = 30  # Initial timeout setting
+    timeout_backoff_factor = 1.5  # Exponential backoff factor for timeouts
     current_timeout = base_timeout
     consecutive_timeouts = 0
-    max_consecutive_timeouts = 5  # 连续超时最大次数
-    last_log_length = 0  # 跟踪上次获取的日志长度，只显示新增内容
+    max_consecutive_timeouts = 5  # Maximum consecutive timeouts before health check
+    last_log_length = 0  # Track length of previously fetched logs to show only new content
     
     for i in range(max_checks):
         try:
             logging.info(f"Checking build status for job {job_id}, attempt {i+1}/{max_checks}")
             
-            # 1. 获取构建状态
+            # 1. Get the build status
             response = requests.get(f"http://{IMAGE_BUILDER_URL}/status/{job_id}", timeout=current_timeout)
             
-            # 成功请求后重置超时设置
+            # Reset timeout settings after successful request
             current_timeout = base_timeout
             consecutive_timeouts = 0
             
@@ -104,7 +108,7 @@ def check_build_status(**kwargs):
                 time.sleep(check_interval)
                 continue
             
-            # 2. 获取队列状态
+            # 2. Get queue status
             try:
                 queue_response = requests.get(f"http://{IMAGE_BUILDER_URL}/queue", timeout=current_timeout)
                 if queue_response.status_code == 200:
@@ -113,23 +117,23 @@ def check_build_status(**kwargs):
             except Exception as queue_err:
                 logging.warning(f"Unable to fetch queue status: {str(queue_err)}")
             
-            # 3. 获取当前构建日志（只显示新增部分）
+            # 3. Get current build logs (only display new content)
             try:
                 logs_response = requests.get(f"http://{IMAGE_BUILDER_URL}/logs/{job_id}", timeout=current_timeout)
                 if logs_response.status_code == 200:
                     logs_data = logs_response.json()
                     current_logs = logs_data.get('logs', '')
                     
-                    # 只显示新增的日志内容
+                    # Only show new log content
                     if len(current_logs) > last_log_length:
                         new_logs = current_logs[last_log_length:]
-                        if new_logs.strip():  # 如果有新的非空日志
+                        if new_logs.strip():  # If there's new non-empty log content
                             logging.info(f"New build logs:\n{new_logs}")
                         last_log_length = len(current_logs)
             except Exception as logs_err:
                 logging.warning(f"Unable to fetch build logs: {str(logs_err)}")
             
-            # 4. 如果有后台进程，检查进程状态
+            # 4. Check process status if there's a background process
             if current_status == 'in_progress':
                 try:
                     process_response = requests.get(f"http://{IMAGE_BUILDER_URL}/process/{job_id}", timeout=current_timeout)
@@ -141,24 +145,24 @@ def check_build_status(**kwargs):
                 
             logging.info(f"Current build status: {current_status}")
             
-            # 如果构建完成或失败，跳出循环
+            # Exit loop if build is completed or failed
             if current_status in ['completed', 'failed']:
                 break
                 
         except requests.exceptions.Timeout as e:
-            # 超时处理
+            # Handle timeouts with exponential backoff
             consecutive_timeouts += 1
             logging.error(f"Error checking build status: {str(e)}")
             
-            # 增加超时设置，但不超过最大值
+            # Increase timeout setting, but don't exceed maximum
             current_timeout = min(current_timeout * timeout_backoff_factor, max_timeout)
             logging.info(f"Increasing timeout to {current_timeout} seconds")
             
-            # 如果连续超时次数太多，尝试不同的策略
+            # Try different strategies if too many consecutive timeouts
             if consecutive_timeouts >= max_consecutive_timeouts:
                 logging.warning(f"Experienced {consecutive_timeouts} consecutive timeouts. Attempting to verify IBS service health...")
                 try:
-                    # 尝试请求根路径以检查服务是否响应
+                    # Try to request root path to check if service is responsive
                     health_check = requests.get(f"http://{IMAGE_BUILDER_URL}/", timeout=10)
                     if health_check.status_code == 200:
                         logging.info("IBS service root endpoint is responsive, continuing status checks...")
@@ -167,35 +171,35 @@ def check_build_status(**kwargs):
                 except Exception as health_e:
                     logging.error(f"IBS service health check failed: {str(health_e)}")
                 
-                # 重置连续超时计数，继续尝试
+                # Reset consecutive timeout counter and continue
                 consecutive_timeouts = 0
         except Exception as e:
             logging.error(f"Error checking build status: {str(e)}")
-            # 继续检查，而不是立即失败
+            # Continue checking instead of failing immediately
         
-        # 等待下次检查
+        # Wait before next check
         time.sleep(check_interval)
     
-    # 最终状态检查，使用更长的超时时间
+    # Final status check with longer timeout
     try:
         logging.info(f"Performing final status check for job {job_id}")
         response = requests.get(f"http://{IMAGE_BUILDER_URL}/status/{job_id}", timeout=max_timeout)
         final_status = response.json()
         
-        # 获取日志
+        # Get logs
         try:
             logs_response = requests.get(f"http://{IMAGE_BUILDER_URL}/logs/{job_id}", timeout=max_timeout)
             logs_data = logs_response.json()
             logs = logs_data.get('logs', '')
         except Exception as e:
             logging.error(f"Error fetching logs: {str(e)}")
-            logs = f"无法获取日志: {str(e)}"
+            logs = f"Unable to fetch logs: {str(e)}"
         
-        # 存储结果
+        # Store results
         ti.xcom_push(key='final_status', value=final_status)
         ti.xcom_push(key='build_logs', value=logs)
         
-        # 获取最终队列状态
+        # Get final queue status
         try:
             queue_response = requests.get(f"http://{IMAGE_BUILDER_URL}/queue", timeout=max_timeout)
             if queue_response.status_code == 200:
@@ -205,7 +209,7 @@ def check_build_status(**kwargs):
         except Exception as queue_err:
             logging.warning(f"Unable to fetch final queue status: {str(queue_err)}")
         
-        # 记录重要的日志片段（最后 20 行）
+        # Log important log snippets (last 20 lines)
         log_lines = logs.split('\n')
         if len(log_lines) > 20:
             logging.info(f"Last 20 lines of build logs:\n{'\n'.join(log_lines[-20:])}")
@@ -214,9 +218,9 @@ def check_build_status(**kwargs):
         
         status = final_status.get('status')
         if status == 'failed':
-            raise Exception(f"Docker 构建失败. 任务 ID: {job_id}. 请检查日志了解详情.")
+            raise Exception(f"Docker build failed. Job ID: {job_id}. Please check logs for details.")
         elif status != 'completed':
-            raise Exception(f"构建未在预期时间内完成. 最终状态: {status}. 任务 ID: {job_id}")
+            raise Exception(f"Build did not complete within expected time. Final status: {status}. Job ID: {job_id}")
             
         logging.info(f"Build completed successfully for job {job_id}")
         return final_status
