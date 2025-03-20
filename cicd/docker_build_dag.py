@@ -6,6 +6,7 @@ import requests
 import json
 import time
 import logging
+import re
 
 # Image Builder Service API endpoint
 IMAGE_BUILDER_URL = "10.27.70.229:9000"
@@ -64,6 +65,106 @@ def submit_build(**kwargs):
     ti.xcom_push(key='job_id', value=job_id)
     return job_id
 
+# Function to parse and format Docker build logs
+def format_docker_build_logs(logs):
+    """
+    Parse and format Docker build logs to highlight build steps and important information.
+    Uses WebUI-friendly formatting with clear dividers and labels.
+    
+    Args:
+        logs: Raw Docker build logs
+        
+    Returns:
+        Formatted logs with build steps clearly marked
+    """
+    if not logs:
+        return ""
+    
+    formatted_logs = []
+    lines = logs.split('\n')
+    current_step = None
+    step_num = None
+    
+    for line in lines:
+        # Format build step lines
+        step_match = re.match(r'#(\d+) \[(\d+)/(\d+)\] (.+)', line)
+        if step_match:
+            step_num = step_match.group(1)
+            current_step = step_match.group(4)
+            progress = f"{step_match.group(2)}/{step_match.group(3)}"
+            
+            # Create a visually distinct header for build steps
+            formatted_logs.append("")
+            formatted_logs.append("=" * 80)
+            formatted_logs.append(f"STEP #{step_num} [{progress}]: {current_step}")
+            formatted_logs.append("=" * 80)
+            continue
+        
+        # Mark important lines
+        if 'error' in line.lower() or 'failed' in line.lower():
+            formatted_logs.append(f"[ERROR] {line}")
+        elif 'warning' in line.lower():
+            formatted_logs.append(f"[WARNING] {line}")
+        elif 'pulling from' in line.lower() or line.startswith('FROM '):
+            formatted_logs.append(f"[PULL] {line}")
+        elif 'download complete' in line.lower() or 'downloading' in line.lower():
+            formatted_logs.append(f"[DOWNLOAD] {line}")
+        # Add indentation for lines within a step to improve readability
+        elif step_num and current_step:
+            if line.startswith('#' + step_num):
+                formatted_logs.append(f"  > {line}")
+            else:
+                formatted_logs.append(f"  {line}")
+        else:
+            formatted_logs.append(line)
+    
+    return '\n'.join(formatted_logs)
+
+# Function to summarize Docker build progress
+def summarize_build_progress(logs):
+    """
+    Create a summary of the Docker build progress, showing completed and current steps.
+    
+    Args:
+        logs: Complete build logs so far
+        
+    Returns:
+        A summary string showing build progress
+    """
+    if not logs:
+        return "Build not started yet"
+    
+    steps = []
+    current_step = None
+    max_step = 0
+    
+    # Extract build steps using regex
+    for line in logs.split('\n'):
+        step_match = re.match(r'#(\d+) \[(\d+)/(\d+)\] (.+)', line)
+        if step_match:
+            step_num = int(step_match.group(1))
+            step_progress = f"{step_match.group(2)}/{step_match.group(3)}"
+            step_desc = step_match.group(4)
+            max_step = max(max_step, step_num)
+            current_step = f"Step {step_num} [{step_progress}]: {step_desc}"
+            steps.append((step_num, current_step))
+    
+    if not steps:
+        return "Build initialized, waiting for steps to begin"
+    
+    # Create a summary
+    summary = ["BUILD PROGRESS SUMMARY:"]
+    summary.append(f"Total steps detected: {max_step}")
+    summary.append(f"Current/Last step: {current_step}")
+    summary.append("")
+    summary.append("Recent steps:")
+    
+    # Show the last 5 steps at most
+    for _, step_desc in sorted(steps)[-5:]:
+        summary.append(f"  - {step_desc}")
+    
+    return '\n'.join(summary)
+
 # Function to check build status
 def check_build_status(**kwargs):
     ti = kwargs['ti']
@@ -83,6 +184,11 @@ def check_build_status(**kwargs):
     consecutive_timeouts = 0
     max_consecutive_timeouts = 5  # Maximum consecutive timeouts before health check
     last_log_length = 0  # Track length of previously fetched logs to show only new content
+    
+    # Store complete logs to generate summaries
+    complete_logs = ""
+    last_summary_time = time.time()
+    summary_interval = 60  # Generate progress summary every minute
     
     for i in range(max_checks):
         try:
@@ -124,12 +230,28 @@ def check_build_status(**kwargs):
                     logs_data = logs_response.json()
                     current_logs = logs_data.get('logs', '')
                     
-                    # Only show new log content
+                    # Update complete logs for summary generation
+                    complete_logs = current_logs
+                    
+                    # Only show new log content with formatting
                     if len(current_logs) > last_log_length:
                         new_logs = current_logs[last_log_length:]
                         if new_logs.strip():  # If there's new non-empty log content
-                            logging.info(f"New build logs:\n{new_logs}")
+                            # Check if this is a Docker build log
+                            if '#' in new_logs and '[' in new_logs and ']' in new_logs:
+                                formatted_logs = format_docker_build_logs(new_logs)
+                                logging.info(f"New build logs:\n{formatted_logs}")
+                            else:
+                                logging.info(f"New build logs:\n{new_logs}")
                         last_log_length = len(current_logs)
+                        
+                    # Generate summary at regular intervals
+                    current_time = time.time()
+                    if current_time - last_summary_time >= summary_interval:
+                        summary = summarize_build_progress(complete_logs)
+                        logging.info(f"\n{summary}")
+                        last_summary_time = current_time
+                        
             except Exception as logs_err:
                 logging.warning(f"Unable to fetch build logs: {str(logs_err)}")
             
@@ -208,6 +330,10 @@ def check_build_status(**kwargs):
                 ti.xcom_push(key='queue_status', value=queue_data)
         except Exception as queue_err:
             logging.warning(f"Unable to fetch final queue status: {str(queue_err)}")
+        
+        # Generate a final build summary
+        final_summary = summarize_build_progress(logs)
+        logging.info(f"\nFINAL BUILD SUMMARY:\n{final_summary}")
         
         # Log important log snippets (last 20 lines)
         log_lines = logs.split('\n')
