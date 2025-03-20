@@ -25,6 +25,9 @@ def submit_build(**kwargs):
     ti = kwargs['ti']
     params = kwargs['params']
     
+    # Get IBS service URL from params or use default
+    ibs_service_url = params.get('ibs_service_url', IMAGE_BUILDER_URL)
+    
     # Prepare the API request payload
     payload = {
         "git_url": params['git_url'],
@@ -44,10 +47,10 @@ def submit_build(**kwargs):
     if 'build_env' in params:
         payload["build_env"] = params['build_env']
     
-    logging.info(f"Submitting build job with payload: {payload}")
+    logging.info(f"Submitting build job to {ibs_service_url} with payload: {payload}")
     
-    # Send API request
-    response = requests.post(f"http://{IMAGE_BUILDER_URL}/build", 
+    # Send API request using the specified service URL
+    response = requests.post(f"http://{ibs_service_url}/build", 
                             headers={'Content-Type': 'application/json'},
                             data=json.dumps(payload))
     
@@ -58,12 +61,13 @@ def submit_build(**kwargs):
     response_data = response.json()
     logging.info(f"Build job submission response: {response_data}")
     
-    # Store the job ID for later use
+    # Store the job ID and service URL for later use
     job_id = response_data.get('job_id')
     if not job_id:
         raise ValueError(f"Failed to get job_id from response: {response_data}")
     
     ti.xcom_push(key='job_id', value=job_id)
+    ti.xcom_push(key='ibs_service_url', value=ibs_service_url)
     return job_id
 
 # Function to parse and format Docker build logs
@@ -621,6 +625,11 @@ with DAG(
             default=True,
             type='boolean',
             description='Automatically remove images after successful build and push (default: True)'
+        ),
+        'ibs_service_url': Param(
+            default=IMAGE_BUILDER_URL,
+            type='string',
+            description='Image Builder Service URL'
         ),
     },
 ) as dag:
