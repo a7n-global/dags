@@ -7,7 +7,6 @@ import json
 import time
 import logging
 import re
-import subprocess
 
 # Image Builder Service API endpoint
 IMAGE_BUILDER_URL = "10.27.70.229:9000"
@@ -34,7 +33,8 @@ def submit_build(**kwargs):
         "image_name": params['image_name'],
         "tag_name": params['tag_name'],
         "docker_hub_urls": params['docker_hub_urls'],
-        "priority": params.get('priority', 0)
+        "priority": params.get('priority', 0),
+        "clean_images": params.get('clean_images', True)
     }
     
     # Add optional parameters if provided
@@ -216,93 +216,10 @@ def summarize_build_progress(logs):
     
     return '\n'.join(summary)
 
-def cleanup_docker_image(image_name: str, tag_name: str, registry_urls: list = None) -> str:
-    """
-    Safely clean up Docker images after successful build and push.
-    Only removes specific images matching the exact name and tag.
-    
-    Args:
-        image_name: Name of the image
-        tag_name: Tag of the image
-        registry_urls: List of registry URLs where image was pushed
-        
-    Returns:
-        Log of removal operations
-    """
-    logs = []
-    images_to_remove = []
-    
-    # Create full image tags for all variations (local and with registry)
-    # First the local tag without registry
-    if '/' in image_name and ('.' in image_name.split('/')[0] or ':' in image_name.split('/')[0]):
-        # Image name already has registry - extract only the repository part
-        parts = image_name.split('/')
-        repo_path = '/'.join(parts[1:])
-        images_to_remove.append(f"{repo_path}:{tag_name}")
-    
-    # Add the image name with tag directly
-    basic_tag = f"{image_name}:{tag_name}"
-    images_to_remove.append(basic_tag)
-    
-    # Add registry-specific tags
-    if registry_urls:
-        for registry in registry_urls:
-            if not registry:
-                continue
-                
-            # Check if image already includes this registry
-            if image_name.startswith(f"{registry}/"):
-                # Already has this registry, just use basic tag
-                continue
-                
-            # For images that don't include registry yet
-            registry_tag = f"{registry}/{image_name.split('/')[-1]}:{tag_name}"
-            if registry_tag not in images_to_remove:
-                images_to_remove.append(registry_tag)
-    
-    logging.info(f"Will attempt to remove the following images: {images_to_remove}")
-    
-    # Execute removal for each image tag
-    for img_tag in images_to_remove:
-        try:
-            # First verify the image exists to avoid errors
-            cmd = ["docker", "image", "inspect", img_tag]
-            result = subprocess.run(cmd, capture_output=True, text=True)
-            
-            if result.returncode == 0:
-                # Image exists, proceed with removal
-                logging.info(f"Removing Docker image: {img_tag}")
-                
-                # Use both tag and digest to ensure we only remove the specific image
-                remove_cmd = ["docker", "rmi", img_tag]
-                remove_result = subprocess.run(remove_cmd, capture_output=True, text=True)
-                
-                if remove_result.returncode == 0:
-                    msg = f"✓ Successfully removed {img_tag}"
-                    logging.info(msg)
-                    logs.append(msg)
-                else:
-                    msg = f"× Failed to remove {img_tag}: {remove_result.stderr.strip()}"
-                    logging.warning(msg)
-                    logs.append(msg)
-            else:
-                logging.info(f"Image {img_tag} not found, skipping removal")
-                
-        except Exception as e:
-            error_msg = f"Error trying to remove {img_tag}: {str(e)}"
-            logging.error(error_msg)
-            logs.append(error_msg)
-    
-    return "\n".join(logs)
-
 # Function to check build status
 def check_build_status(**kwargs):
     ti = kwargs['ti']
     job_id = ti.xcom_pull(task_ids='submit_build_task', key='job_id')
-    params = kwargs['params']
-    
-    # Get cleanup preference 
-    cleanup_images = params.get('cleanup_images', True)
     
     if not job_id:
         raise ValueError("No job_id found from previous task")
@@ -535,48 +452,14 @@ def check_build_status(**kwargs):
             error_msg = f"Docker build failed. Job ID: {job_id}."
             if error_details:
                 error_msg += f" Errors:\n" + "\n".join(error_details)
-                
-            # Clean up images even if build failed but we might have created some images
-            if cleanup_images:
-                try:
-                    # Extract image SHA from logs if possible
-                    sha_match = re.search(r'sha256:([a-f0-9]+)', logs)
-                    if sha_match:
-                        image_sha = sha_match.group(1)
-                        logging.info(f"Found partial image SHA in failed build: {image_sha}")
-                        # Try to remove by SHA
-                        subprocess.run(["docker", "rmi", f"sha256:{image_sha}"], 
-                                       capture_output=True, text=True)
-                    
-                    # Still try normal cleanup
-                    cleanup_logs = cleanup_docker_image(params['image_name'], params['tag_name'], params['docker_hub_urls'])
-                    logging.info(f"Cleanup after failed build: {cleanup_logs}")
-                except Exception as cleanup_e:
-                    logging.warning(f"Error cleaning up after failed build: {str(cleanup_e)}")
-                    
             raise Exception(error_msg)
         elif status != 'completed':
             error_msg = f"Build did not complete within expected time. Final status: {status}. Job ID: {job_id}"
             if error_details:
                 error_msg += f" Potential issues:\n" + "\n".join(error_details)
-                
-            # Try to clean up any partial images
-            if cleanup_images:
-                try:
-                    cleanup_logs = cleanup_docker_image(params['image_name'], params['tag_name'], params['docker_hub_urls'])
-                    logging.info(f"Cleanup after incomplete build: {cleanup_logs}")
-                except Exception as cleanup_e:
-                    logging.warning(f"Error cleaning up after incomplete build: {str(cleanup_e)}")
-                    
             raise Exception(error_msg)
             
         logging.info(f"Build completed successfully for job {job_id}")
-        
-        if cleanup_images:
-            logging.info(f"Cleaning up images after successful build...")
-            cleanup_logs = cleanup_docker_image(params['image_name'], params['tag_name'], params['docker_hub_urls'])
-            logging.info(f"Cleanup result: {cleanup_logs}")
-        
         return final_status
         
     except Exception as e:
@@ -734,10 +617,10 @@ with DAG(
             type='integer',
             description='Build priority (higher number = higher priority)'
         ),
-        'cleanup_images': Param(
+        'clean_images': Param(
             default=True,
             type='boolean',
-            description='Whether to clean up local images after successful push (default: true)'
+            description='Automatically remove images after successful build and push (default: True)'
         ),
     },
 ) as dag:
