@@ -74,7 +74,7 @@ def check_build_status(**kwargs):
         
     logging.info(f"Starting to monitor build status for job ID: {job_id}")
     
-    max_checks = 120  # Increased number of checks to support longer build times (up to 20 minutes)
+    max_checks = 3600  # Increased number of checks to support longer build times (10 secs for 1 try)
     check_interval = 10  # Seconds between checks
     max_timeout = 60  # Maximum timeout value in seconds
     base_timeout = 30  # Initial timeout setting
