@@ -608,7 +608,7 @@ with DAG(
             description='Tag for the Docker image'
         ),
         'docker_hub_urls': Param(
-            default=["hub.anuttacon.com"],
+            default=["hub.anuttacon.com", "sea-hub.shiyak-office.com"],
             type='array',
             description='Docker Hub URLs for image pushing'
         ),
