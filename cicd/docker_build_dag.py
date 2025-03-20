@@ -70,12 +70,13 @@ def format_docker_build_logs(logs):
     """
     Parse and format Docker build logs to highlight build steps and important information.
     Uses WebUI-friendly formatting with clear dividers and labels.
+    Reorders steps by Dockerfile order instead of BuildKit internal IDs.
     
     Args:
         logs: Raw Docker build logs
         
     Returns:
-        Formatted logs with build steps clearly marked
+        Formatted logs with build steps clearly marked and properly ordered
     """
     if not logs:
         return ""
@@ -85,19 +86,47 @@ def format_docker_build_logs(logs):
     current_step = None
     step_num = None
     
+    # First pass: collect all steps with their BuildKit IDs and Dockerfile positions
+    all_steps = {}
     for line in lines:
-        # Format build step lines
         step_match = re.match(r'#(\d+) \[(\d+)/(\d+)\] (.+)', line)
         if step_match:
-            step_num = step_match.group(1)
-            current_step = step_match.group(4)
-            progress = f"{step_match.group(2)}/{step_match.group(3)}"
+            buildkit_id = int(step_match.group(1))
+            dockerfile_pos = int(step_match.group(2))
+            dockerfile_total = int(step_match.group(3))
+            step_desc = step_match.group(4)
+            all_steps[buildkit_id] = {
+                'position': dockerfile_pos,
+                'total': dockerfile_total,
+                'description': step_desc,
+                'buildkit_id': buildkit_id
+            }
+    
+    # Sort steps by their Dockerfile position
+    sorted_steps = sorted(all_steps.values(), key=lambda x: x['position'])
+    
+    # Map from BuildKit ID to sequential step number
+    step_id_mapping = {step['buildkit_id']: i+1 for i, step in enumerate(sorted_steps)}
+    
+    # Second pass: format logs with the mapped step numbers
+    for line in lines:
+        step_match = re.match(r'#(\d+) \[(\d+)/(\d+)\] (.+)', line)
+        if step_match:
+            buildkit_id = int(step_match.group(1))
+            step_pos = step_match.group(2)
+            step_total = step_match.group(3)
+            step_desc = step_match.group(4)
+            
+            # Use sequential step number instead of BuildKit ID
+            sequential_num = step_id_mapping.get(buildkit_id, buildkit_id)
             
             # Create a visually distinct header for build steps
             formatted_logs.append("")
             formatted_logs.append("=" * 80)
-            formatted_logs.append(f"STEP #{step_num} [{progress}]: {current_step}")
+            formatted_logs.append(f"STEP {sequential_num} [{step_pos}/{step_total}]: {step_desc}")
             formatted_logs.append("=" * 80)
+            current_step = step_desc
+            step_num = str(buildkit_id)  # Keep original BuildKit ID for matching output lines
             continue
         
         # Mark important lines
@@ -124,44 +153,65 @@ def format_docker_build_logs(logs):
 def summarize_build_progress(logs):
     """
     Create a summary of the Docker build progress, showing completed and current steps.
+    Reorders steps by Dockerfile order instead of BuildKit internal IDs.
     
     Args:
         logs: Complete build logs so far
         
     Returns:
-        A summary string showing build progress
+        A summary string showing build progress in logical order
     """
     if not logs:
         return "Build not started yet"
     
-    steps = []
-    current_step = None
-    max_step = 0
-    
-    # Extract build steps using regex
+    # Extract all steps using regex
+    buildkit_steps = {}
     for line in logs.split('\n'):
         step_match = re.match(r'#(\d+) \[(\d+)/(\d+)\] (.+)', line)
         if step_match:
-            step_num = int(step_match.group(1))
-            step_progress = f"{step_match.group(2)}/{step_match.group(3)}"
+            buildkit_id = int(step_match.group(1))
+            dockerfile_pos = int(step_match.group(2))
+            dockerfile_total = int(step_match.group(3))
             step_desc = step_match.group(4)
-            max_step = max(max_step, step_num)
-            current_step = f"Step {step_num} [{step_progress}]: {step_desc}"
-            steps.append((step_num, current_step))
+            buildkit_steps[buildkit_id] = {
+                'position': dockerfile_pos,
+                'total': dockerfile_total,
+                'description': step_desc,
+                'buildkit_id': buildkit_id
+            }
     
-    if not steps:
+    if not buildkit_steps:
         return "Build initialized, waiting for steps to begin"
+    
+    # Sort steps by their position in the Dockerfile
+    sorted_steps = sorted(buildkit_steps.values(), key=lambda x: x['position'])
+    dockerfile_total = sorted_steps[0]['total'] if sorted_steps else 0
     
     # Create a summary
     summary = ["BUILD PROGRESS SUMMARY:"]
-    summary.append(f"Total steps detected: {max_step}")
-    summary.append(f"Current/Last step: {current_step}")
+    
+    # Find the latest step (the one with the highest position)
+    latest_step = sorted_steps[-1] if sorted_steps else None
+    
+    # Create sequential step numbers
+    steps_with_sequential_ids = []
+    for i, step in enumerate(sorted_steps):
+        step_num = i + 1  # Sequential ID
+        step_text = f"Step {step_num} [{step['position']}/{step['total']}]: {step['description']}"
+        steps_with_sequential_ids.append(step_text)
+    
+    summary.append(f"Total Dockerfile steps: {dockerfile_total}")
+    if latest_step:
+        progress_pct = (latest_step['position'] / dockerfile_total) * 100
+        summary.append(f"Current progress: {latest_step['position']}/{dockerfile_total} steps ({progress_pct:.1f}%)")
+        summary.append(f"Current/Last step: {steps_with_sequential_ids[-1]}")
+    
     summary.append("")
     summary.append("Recent steps:")
     
-    # Show the last 5 steps at most
-    for _, step_desc in sorted(steps)[-5:]:
-        summary.append(f"  - {step_desc}")
+    # Show the last 5 steps at most (in Dockerfile order)
+    for step_text in steps_with_sequential_ids[-5:]:
+        summary.append(f"  - {step_text}")
     
     return '\n'.join(summary)
 
