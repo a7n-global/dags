@@ -188,7 +188,11 @@ def check_build_status(**kwargs):
     # Store complete logs to generate summaries
     complete_logs = ""
     last_summary_time = time.time()
-    summary_interval = 60  # Generate progress summary every minute
+    summary_interval = 60
+    
+    # Track potentially useful error information
+    error_details = []
+    process_status_history = []
     
     for i in range(max_checks):
         try:
@@ -243,6 +247,17 @@ def check_build_status(**kwargs):
                                 logging.info(f"New build logs:\n{formatted_logs}")
                             else:
                                 logging.info(f"New build logs:\n{new_logs}")
+                                
+                            # Check for error indicators in new logs
+                            error_lines = [line for line in new_logs.split('\n') 
+                                         if ('error' in line.lower() or 'failed' in line.lower() or 
+                                             'not found' in line.lower() or 'denied' in line.lower())]
+                            if error_lines:
+                                for error_line in error_lines:
+                                    if error_line.strip() and error_line not in error_details:
+                                        error_details.append(error_line.strip())
+                                        logging.warning(f"Potential error detected: {error_line.strip()}")
+                                    
                         last_log_length = len(current_logs)
                         
                     # Generate summary at regular intervals
@@ -261,7 +276,20 @@ def check_build_status(**kwargs):
                     process_response = requests.get(f"http://{IMAGE_BUILDER_URL}/process/{job_id}", timeout=current_timeout)
                     if process_response.status_code == 200:
                         process_data = process_response.json()
-                        logging.info(f"Build process status: {process_data.get('status')}, CPU: {process_data.get('cpu_percent')}%, Memory: {process_data.get('memory_percent')}%")
+                        proc_status = process_data.get('status')
+                        logging.info(f"Build process status: {proc_status}, CPU: {process_data.get('cpu_percent')}%, Memory: {process_data.get('memory_percent')}%")
+                        
+                        # Track process status changes
+                        if process_status_history and process_status_history[-1] != proc_status:
+                            logging.info(f"Process status changed: {process_status_history[-1]} -> {proc_status}")
+                        process_status_history.append(proc_status)
+                        
+                        # Check for error status in process
+                        if proc_status in ['failed', 'terminated', 'zombie']:
+                            error_msg = process_data.get('error')
+                            if error_msg and error_msg not in error_details:
+                                error_details.append(error_msg)
+                                logging.warning(f"Error in build process: {error_msg}")
                 except Exception as process_err:
                     logging.debug(f"Unable to fetch process info: {str(process_err)}")
                 
@@ -331,6 +359,19 @@ def check_build_status(**kwargs):
         except Exception as queue_err:
             logging.warning(f"Unable to fetch final queue status: {str(queue_err)}")
         
+        # Get final process status
+        try:
+            process_response = requests.get(f"http://{IMAGE_BUILDER_URL}/process/{job_id}", timeout=max_timeout)
+            if process_response.status_code == 200:
+                process_data = process_response.json()
+                ti.xcom_push(key='process_status', value=process_data)
+                
+                # Add process error to error details if available
+                if process_data.get('error') and process_data.get('error') not in error_details:
+                    error_details.append(process_data.get('error'))
+        except Exception as proc_err:
+            logging.warning(f"Unable to fetch final process status: {str(proc_err)}")
+        
         # Generate a final build summary
         final_summary = summarize_build_progress(logs)
         logging.info(f"\nFINAL BUILD SUMMARY:\n{final_summary}")
@@ -342,11 +383,30 @@ def check_build_status(**kwargs):
         else:
             logging.info(f"Complete build logs:\n{logs}")
         
+        # Final check for any error indicators in the complete logs
+        if 'error' in logs.lower() or 'failed' in logs.lower():
+            error_pattern = re.compile(r'(?i)(error|failed|not found).*')
+            for line in logs.split('\n'):
+                match = error_pattern.search(line)
+                if match and line.strip() not in error_details:
+                    error_details.append(line.strip())
+        
+        # Store collected error details
+        if error_details:
+            ti.xcom_push(key='error_details', value=error_details)
+            logging.error(f"Build errors detected:\n" + "\n".join(error_details))
+        
         status = final_status.get('status')
         if status == 'failed':
-            raise Exception(f"Docker build failed. Job ID: {job_id}. Please check logs for details.")
+            error_msg = f"Docker build failed. Job ID: {job_id}."
+            if error_details:
+                error_msg += f" Errors:\n" + "\n".join(error_details)
+            raise Exception(error_msg)
         elif status != 'completed':
-            raise Exception(f"Build did not complete within expected time. Final status: {status}. Job ID: {job_id}")
+            error_msg = f"Build did not complete within expected time. Final status: {status}. Job ID: {job_id}"
+            if error_details:
+                error_msg += f" Potential issues:\n" + "\n".join(error_details)
+            raise Exception(error_msg)
             
         logging.info(f"Build completed successfully for job {job_id}")
         return final_status
@@ -354,6 +414,104 @@ def check_build_status(**kwargs):
     except Exception as e:
         logging.error(f"Final status check failed: {str(e)}")
         raise
+
+# Add this new function after check_build_status
+
+def handle_build_failure(**kwargs):
+    """
+    Function to handle build failures, analyze error details, and provide useful feedback.
+    This task runs when a build fails and provides detailed diagnostic information.
+    """
+    ti = kwargs['ti']
+    
+    # Get collected data from previous task
+    try:
+        job_id = ti.xcom_pull(task_ids='submit_build_task', key='job_id')
+        final_status = ti.xcom_pull(task_ids='check_build_status_task', key='final_status')
+        logs = ti.xcom_pull(task_ids='check_build_status_task', key='build_logs')
+        error_details = ti.xcom_pull(task_ids='check_build_status_task', key='error_details')
+        process_status = ti.xcom_pull(task_ids='check_build_status_task', key='process_status')
+    except Exception as e:
+        logging.error(f"Failed to retrieve task data: {str(e)}")
+        raise Exception("Build failed with incomplete error information. Check IBS logs directly.")
+    
+    # Check what type of failure occurred
+    status = final_status.get('status') if final_status else 'unknown'
+    
+    # Build a comprehensive error message
+    failure_reason = "Unknown failure"
+    troubleshooting_steps = []
+    
+    # Analyze error details and logs to determine failure type
+    if error_details:
+        # Look for specific error patterns
+        for error in error_details:
+            if "permission denied" in error.lower() or "access denied" in error.lower():
+                failure_reason = "Permission issue"
+                troubleshooting_steps.append("- Check Docker registry authentication and permissions")
+                troubleshooting_steps.append("- Verify IBS service has proper access to the Docker daemon")
+                break
+            elif "no such file or directory" in error.lower() and "dockerfile" in error.lower():
+                failure_reason = "Dockerfile not found"
+                troubleshooting_steps.append("- Verify the Dockerfile exists in the specified path")
+                troubleshooting_steps.append("- Check that the dockerfile_path parameter is correct")
+                break
+            elif "git" in error.lower() and ("not found" in error.lower() or "does not exist" in error.lower()):
+                failure_reason = "Git repository or branch issue"
+                troubleshooting_steps.append("- Verify the git URL is correct and accessible")
+                troubleshooting_steps.append("- Check that the specified branch exists")
+                break
+            elif "network" in error.lower() or "connection" in error.lower():
+                failure_reason = "Network connectivity issue"
+                troubleshooting_steps.append("- Check network connectivity between IBS and Docker registry")
+                troubleshooting_steps.append("- Verify Docker registry is accessible")
+                break
+    
+    # Check process status for additional clues
+    if process_status:
+        proc_status = process_status.get('status')
+        if proc_status == 'zombie':
+            failure_reason = f"{failure_reason} (process became zombie)"
+            troubleshooting_steps.append("- Docker build process terminated unexpectedly")
+            troubleshooting_steps.append("- Check IBS server resources (CPU/memory)")
+        elif proc_status == 'terminated':
+            failure_reason = f"{failure_reason} (process terminated)"
+            troubleshooting_steps.append("- The build process was terminated before completion")
+    
+    # If no specific reason found, provide generic guidance
+    if not troubleshooting_steps:
+        troubleshooting_steps = [
+            "- Check Docker daemon status on IBS server",
+            "- Verify Dockerfile syntax",
+            "- Ensure required build context files are present in the repository",
+            "- Review the complete build logs for specific error messages"
+        ]
+    
+    # Create a detailed error report
+    error_report = f"""
+DOCKER BUILD FAILURE REPORT
+==========================
+Job ID: {job_id}
+Status: {status}
+Failure Reason: {failure_reason}
+
+ERROR DETAILS:
+{chr(10).join(error_details) if error_details else "No specific error details available"}
+
+TROUBLESHOOTING STEPS:
+{chr(10).join(troubleshooting_steps)}
+
+For more information, review the complete build logs.
+"""
+    
+    # Log the error report
+    logging.error(error_report)
+    
+    # Store the error report for downstream tasks
+    ti.xcom_push(key='error_report', value=error_report)
+    
+    # Return the error report but still raise an exception to mark the task as failed
+    raise Exception(f"Docker build failed: {failure_reason}. See error report for details.")
 
 with DAG(
     dag_id="docker_build_pipeline",
@@ -401,12 +559,12 @@ with DAG(
         'docker_hub_urls': Param(
             default=["hub.anuttacon.com"],
             type='array',
-            description='List of Docker Hub URLs to push the image to'
+            description='Docker Hub URLs for image pushing'
         ),
         'priority': Param(
             default=0,
             type='integer',
-            description='Build priority (higher means more priority)'
+            description='Build priority (higher number = higher priority)'
         ),
     },
 ) as dag:
@@ -421,7 +579,15 @@ with DAG(
     check_build_status_task = PythonOperator(
         task_id="check_build_status_task",
         python_callable=check_build_status,
+        trigger_rule="all_success"
+    )
+    
+    # Task to handle build failures with detailed analysis
+    handle_failure_task = PythonOperator(
+        task_id="handle_build_failure",
+        python_callable=handle_build_failure,
+        trigger_rule="all_failed",  # This task only runs if check_build_status fails
     )
     
     # Set task dependencies
-    submit_build_task >> check_build_status_task 
+    submit_build_task >> check_build_status_task >> handle_failure_task 
