@@ -224,11 +224,12 @@ def summarize_build_progress(logs):
 def check_build_status(**kwargs):
     ti = kwargs['ti']
     job_id = ti.xcom_pull(task_ids='submit_build_task', key='job_id')
+    ibs_service_url = ti.xcom_pull(task_ids='submit_build_task', key='ibs_service_url')
     
     if not job_id:
         raise ValueError("No job_id found from previous task")
         
-    logging.info(f"Starting to monitor build status for job ID: {job_id}")
+    logging.info(f"Starting to monitor build status for job ID: {job_id} on {ibs_service_url}")
     
     max_checks = 3600  # Increased number of checks to support longer build times (10 secs for 1 try)
     check_interval = 10  # Seconds between checks
@@ -254,7 +255,7 @@ def check_build_status(**kwargs):
             logging.info(f"Checking build status for job {job_id}, attempt {i+1}/{max_checks}")
             
             # 1. Get the build status
-            response = requests.get(f"http://{IMAGE_BUILDER_URL}/status/{job_id}", timeout=current_timeout)
+            response = requests.get(f"http://{ibs_service_url}/status/{job_id}", timeout=current_timeout)
             
             # Reset timeout settings after successful request
             current_timeout = base_timeout
@@ -275,7 +276,7 @@ def check_build_status(**kwargs):
             
             # 2. Get queue status
             try:
-                queue_response = requests.get(f"http://{IMAGE_BUILDER_URL}/queue", timeout=current_timeout)
+                queue_response = requests.get(f"http://{ibs_service_url}/queue", timeout=current_timeout)
                 if queue_response.status_code == 200:
                     queue_data = queue_response.json()
                     logging.info(f"IBS Queue Status: Active builds: {queue_data.get('active_builds')}/{queue_data.get('max_concurrent_builds')}, Queued: {queue_data.get('queued_builds')}")
@@ -284,7 +285,7 @@ def check_build_status(**kwargs):
             
             # 3. Get current build logs (only display new content)
             try:
-                logs_response = requests.get(f"http://{IMAGE_BUILDER_URL}/logs/{job_id}", timeout=current_timeout)
+                logs_response = requests.get(f"http://{ibs_service_url}/logs/{job_id}", timeout=current_timeout)
                 if logs_response.status_code == 200:
                     logs_data = logs_response.json()
                     current_logs = logs_data.get('logs', '')
@@ -328,7 +329,7 @@ def check_build_status(**kwargs):
             # 4. Check process status if there's a background process
             if current_status == 'in_progress':
                 try:
-                    process_response = requests.get(f"http://{IMAGE_BUILDER_URL}/process/{job_id}", timeout=current_timeout)
+                    process_response = requests.get(f"http://{ibs_service_url}/process/{job_id}", timeout=current_timeout)
                     if process_response.status_code == 200:
                         process_data = process_response.json()
                         proc_status = process_data.get('status')
@@ -368,7 +369,7 @@ def check_build_status(**kwargs):
                 logging.warning(f"Experienced {consecutive_timeouts} consecutive timeouts. Attempting to verify IBS service health...")
                 try:
                     # Try to request root path to check if service is responsive
-                    health_check = requests.get(f"http://{IMAGE_BUILDER_URL}/", timeout=10)
+                    health_check = requests.get(f"http://{ibs_service_url}/", timeout=10)
                     if health_check.status_code == 200:
                         logging.info("IBS service root endpoint is responsive, continuing status checks...")
                     else:
@@ -388,12 +389,12 @@ def check_build_status(**kwargs):
     # Final status check with longer timeout
     try:
         logging.info(f"Performing final status check for job {job_id}")
-        response = requests.get(f"http://{IMAGE_BUILDER_URL}/status/{job_id}", timeout=max_timeout)
+        response = requests.get(f"http://{ibs_service_url}/status/{job_id}", timeout=max_timeout)
         final_status = response.json()
         
         # Get logs
         try:
-            logs_response = requests.get(f"http://{IMAGE_BUILDER_URL}/logs/{job_id}", timeout=max_timeout)
+            logs_response = requests.get(f"http://{ibs_service_url}/logs/{job_id}", timeout=max_timeout)
             logs_data = logs_response.json()
             logs = logs_data.get('logs', '')
         except Exception as e:
@@ -406,7 +407,7 @@ def check_build_status(**kwargs):
         
         # Get final queue status
         try:
-            queue_response = requests.get(f"http://{IMAGE_BUILDER_URL}/queue", timeout=max_timeout)
+            queue_response = requests.get(f"http://{ibs_service_url}/queue", timeout=max_timeout)
             if queue_response.status_code == 200:
                 queue_data = queue_response.json()
                 logging.info(f"Final IBS Queue Status: Active builds: {queue_data.get('active_builds')}/{queue_data.get('max_concurrent_builds')}, Queued: {queue_data.get('queued_builds')}")
@@ -416,7 +417,7 @@ def check_build_status(**kwargs):
         
         # Get final process status
         try:
-            process_response = requests.get(f"http://{IMAGE_BUILDER_URL}/process/{job_id}", timeout=max_timeout)
+            process_response = requests.get(f"http://{ibs_service_url}/process/{job_id}", timeout=max_timeout)
             if process_response.status_code == 200:
                 process_data = process_response.json()
                 ti.xcom_push(key='process_status', value=process_data)
@@ -482,6 +483,7 @@ def handle_build_failure(**kwargs):
     # Get collected data from previous task
     try:
         job_id = ti.xcom_pull(task_ids='submit_build_task', key='job_id')
+        ibs_service_url = ti.xcom_pull(task_ids='submit_build_task', key='ibs_service_url')
         final_status = ti.xcom_pull(task_ids='check_build_status_task', key='final_status')
         logs = ti.xcom_pull(task_ids='check_build_status_task', key='build_logs')
         error_details = ti.xcom_pull(task_ids='check_build_status_task', key='error_details')
@@ -489,6 +491,9 @@ def handle_build_failure(**kwargs):
     except Exception as e:
         logging.error(f"Failed to retrieve task data: {str(e)}")
         raise Exception("Build failed with incomplete error information. Check IBS logs directly.")
+    
+    # Log the IBS server being used
+    logging.info(f"Analyzing build failure for job {job_id} on IBS server {ibs_service_url}")
     
     # Check what type of failure occurred
     status = final_status.get('status') if final_status else 'unknown'
