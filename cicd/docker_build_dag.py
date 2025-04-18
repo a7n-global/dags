@@ -8,6 +8,7 @@ import time
 import logging
 import re
 
+
 # Image Builder Service API endpoint
 IMAGE_BUILDER_URL = "10.27.70.229:9000"
 
