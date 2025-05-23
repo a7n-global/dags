@@ -1,0 +1,21 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Workflow
+metadata:
+  generateName: deepseek-eval-run-
+  namespace: argo
+spec:
+  # 使用前面定义的WorkflowTemplate
+  workflowTemplateRef:
+    name: deepseek-eval-template
+  
+  # 覆盖参数
+  arguments:
+    parameters:
+    - name: job_name
+      value: "deepseek-v2-lite-eval"
+    - name: project_name
+      value: "deepseek_v2_lite"
+    - name: model_input
+      value: "/mnt/share/models/deepseek-v2-lite-base"  # 替换为实际模型路径
+    - name: task_input
+      value: '["mmlu", "hellaswag", "truthfulqa", "gsm8k"]'  # 评估任务列表 

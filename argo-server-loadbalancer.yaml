@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: argo-server-lb
+  namespace: argo
+  labels:
+    app: argo-server
+spec:
+  type: LoadBalancer
+  ports:
+  - port: 443
+    protocol: TCP
+    targetPort: 2746
+    name: web
+  selector:
+    app: argo-server 

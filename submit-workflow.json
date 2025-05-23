@@ -1,0 +1,33 @@
+{
+  "workflow": {
+    "metadata": {
+      "generateName": "deepseek-eval-api-",
+      "namespace": "argo"
+    },
+    "spec": {
+      "workflowTemplateRef": {
+        "name": "deepseek-eval-template"
+      },
+      "arguments": {
+        "parameters": [
+          {
+            "name": "job_name",
+            "value": "api-experiment-1"
+          },
+          {
+            "name": "project_name",
+            "value": "deepseek_v2_lite"
+          },
+          {
+            "name": "model_input",
+            "value": "/models/deepseek-v2"
+          },
+          {
+            "name": "task_input",
+            "value": "[\"hellaswag\", \"truthfulqa\"]"
+          }
+        ]
+      }
+    }
+  }
+} 

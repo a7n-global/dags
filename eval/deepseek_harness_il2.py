@@ -177,16 +177,23 @@ with DAG(
     eval_main_args = [
         "/mnt/project/llm/users/xug/code/trial/Ocean/users/xuguang/evaluation/airflow_pipeline/airflow_llm_evaluation_harness.sh",
     ]
-    
+
     eval_tasks = []  # 存储所有eval任务
     for i, task_input in enumerate(dag.params['task_input']):
-        task_id = f"llm_eval_harness_task_{i}_{task_input}"  # 使用索引而不是运行时参数
+        task_id = f"llm_eval_harness_task_{i}"
         eval_task = KubernetesPodOperator(
             task_id=task_id,
             namespace="airflow",
             image="hub.anuttacon.com/docker.io/vllm/vllm-openai:v0.6.4",
             cmds=eval_main_cmds,
-            arguments=eval_main_args + ["{{ params.model_input }}/hf"] + ["{{ params.project_name }}"] + ["{{ params.job_name }}"] + [task_input],
+            #arguments=eval_main_args + ["{{ params.model_input }}/hf"] + ["{{ params.project_name }}"] + ["{{ params.job_name }}"] + [task_input],
+            arguments=[
+                "/mnt/project/llm/users/xug/code/trial/Ocean/users/xuguang/evaluation/airflow_pipeline/airflow_llm_evaluation_harness.sh",
+                "{{ params.model_input }}/hf",
+                "{{ params.project_name }}",
+                "{{ params.job_name }}",
+                f"{{{{ params.task_input[{i}] }}}}"  # 注意双重花括号
+            ],
             container_resources=resources_request,
             volumes=eval_volumes,
             volume_mounts=volume_mounts,
@@ -198,7 +205,7 @@ with DAG(
             do_xcom_push=False,
         )
         eval_tasks.append(eval_task)
-    
+
     # Set task dependencies
     start >> convert_task
     for eval_task in eval_tasks:
