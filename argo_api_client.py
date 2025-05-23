@@ -17,6 +17,7 @@ import urllib3
 import argparse
 import sys
 import os
+from pathlib import Path
 from rich.console import Console
 from rich.table import Table, box
 from rich.text import Text
@@ -46,25 +47,33 @@ class ArgoWorkflowsClient:
         print(f"🌐 Argo Server URL: {self.server_url}")
         
     def submit_workflow(self, job_name, model_input, task_input):
-        """提交工作流"""
+        """提交多模型嵌套工作流"""
         url = f"{self.server_url}/api/v1/workflows/{self.namespace}"
+        
+        # 为模型添加索引信息
+        model_list_with_index = []
+        for i, model_path in enumerate(model_input):
+            model_list_with_index.append({
+                "path": model_path,
+                "index": i
+            })
         
         payload = {
             "workflow": {
                 "metadata": {
-                    "generateName": "deepseek-eval-api-",
+                    "generateName": "multi-eval-api-",
                     "namespace": self.namespace
                 },
                 "spec": {
                     "workflowTemplateRef": {
-                        "name": "deepseek-eval-template"
+                        "name": "deepseek-multi-model-eval-template"
                     },
                     "arguments": {
                         "parameters": [
                             {"name": "job_name", "value": job_name},
                             {"name": "project_name", "value": "deepseek_v2_lite"},
-                            {"name": "model_input", "value": model_input},
-                            {"name": "task_input", "value": json.dumps(task_input)}
+                            {"name": "model_list", "value": json.dumps(model_list_with_index)},
+                            {"name": "task_list", "value": json.dumps(task_input)}
                         ]
                     }
                 }
@@ -76,7 +85,10 @@ class ArgoWorkflowsClient:
         if response.status_code == 200:
             workflow_info = response.json()
             workflow_name = workflow_info['metadata']['name']
-            print(f"✅ 工作流提交成功: {workflow_name}")
+            print(f"✅ 嵌套工作流提交成功: {workflow_name}")
+            print(f"   🏭 模型流水线: {len(model_input)} 个")
+            print(f"   📊 每个模型的任务: {len(task_input)} 个")
+            print(f"   🎯 总评估任务: {len(model_input) * len(task_input)} 个")
             return workflow_name
         else:
             print(f"❌ 提交失败: {response.status_code} - {response.text}")
@@ -203,9 +215,17 @@ class ArgoWorkflowsClient:
                         'node_id': node_id
                     }
                     
-                    if 'convert' in node_name.lower():
+                    # 识别嵌套工作流的任务类型
+                    if ('convert' in node_name.lower() or 
+                        node_name.startswith('convert-models') or
+                        'convert-model' in node_name.lower()):
+                        # 转换任务（支持单模型、多模型和嵌套工作流）
                         convert_tasks.append(task_info)
-                    elif 'eval' in node_name.lower() or 'run-eval' in node_name.lower():
+                    elif (('run-eval' in node_name.lower() and ':' in node_name) or 
+                          node_name.startswith('eval-combinations') or
+                          'eval-tasks' in node_name.lower() or
+                          node_name.startswith('model-pipeline')):
+                        # 评估任务（支持单模型、多模型和嵌套工作流）
                         eval_tasks.append(task_info)
                     else:
                         other_tasks.append(task_info)
@@ -323,9 +343,12 @@ class ArgoWorkflowsClient:
                         'pod_name': pod_name
                     }
                     
-                    if 'convert' in node_name.lower():
+                    # 只保留有意义的任务
+                    if 'convert' in node_name.lower() or node_name.startswith('convert-models'):
+                        # 转换任务（支持单模型和多模型工作流）
                         convert_tasks.append(task_info)
-                    elif 'eval' in node_name.lower() or 'run-eval' in node_name.lower():
+                    elif ('run-eval' in node_name.lower() and ':' in node_name) or node_name.startswith('eval-combinations'):
+                        # 评估任务（支持单模型和多模型工作流）
                         eval_tasks.append(task_info)
                     else:
                         other_tasks.append(task_info)
@@ -484,10 +507,11 @@ class ArgoWorkflowsClient:
                     }
                     
                     # 只保留有意义的任务
-                    if 'convert' in node_name.lower():
+                    if 'convert' in node_name.lower() or node_name.startswith('convert-models'):
+                        # 转换任务（支持单模型和多模型工作流）
                         convert_tasks.append(task_info)
-                    elif 'run-eval' in node_name.lower() and ':' in node_name:
-                        # 只显示具体的 run-eval 任务，排除其他评估相关的管理任务
+                    elif ('run-eval' in node_name.lower() and ':' in node_name) or node_name.startswith('eval-combinations'):
+                        # 评估任务（支持单模型和多模型工作流）
                         eval_tasks.append(task_info)
                 
                 # 添加任务到表格
@@ -613,6 +637,123 @@ class ArgoWorkflowsClient:
         except Exception as e:
             return '-'
 
+def discover_model_directories(base_path):
+    """
+    自动发现指定路径下的所有模型目录
+    
+    参数：
+    - base_path: 基础路径，如 "/models"
+    
+    返回：
+    - 模型目录列表，如 ["/models/deepseek-v2", "/models/qwen-2"]
+    """
+    try:
+        base_path = Path(base_path)
+        
+        if not base_path.exists():
+            print(f"❌ 路径不存在: {base_path}")
+            return []
+            
+        if not base_path.is_dir():
+            print(f"❌ 不是目录: {base_path}")
+            return []
+        
+        # 获取所有子目录
+        model_dirs = []
+        for item in base_path.iterdir():
+            if item.is_dir():
+                # 过滤掉隐藏目录和常见的非模型目录
+                if not item.name.startswith('.') and item.name not in ['__pycache__', 'tmp', 'cache']:
+                    model_dirs.append(str(item.absolute()))
+        
+        if not model_dirs:
+            print(f"⚠️ 在 {base_path} 下未找到任何子目录")
+            return []
+        
+        # 按名称排序
+        model_dirs.sort()
+        
+        print(f"🔍 在 {base_path} 下发现 {len(model_dirs)} 个模型目录:")
+        for i, model_dir in enumerate(model_dirs):
+            model_name = Path(model_dir).name
+            print(f"  {i+1}. {model_name} ({model_dir})")
+        
+        return model_dirs
+        
+    except Exception as e:
+        print(f"❌ 扫描目录时出错: {e}")
+        return []
+
+def parse_model_input(model_input_str):
+    """
+    解析模型输入，支持多种格式
+    
+    格式说明：
+    - 单个路径（目录）："/models" → 自动发现子目录
+    - 单个模型："/models/deepseek-v2"
+    - 多个模型（逗号分隔）："/models/deepseek-v2,/models/qwen-2"
+    - JSON数组：'["/models/deepseek-v2", "/models/qwen-2"]'
+    """
+    if not model_input_str:
+        return []
+    
+    # 如果是JSON格式，直接解析
+    if model_input_str.startswith('[') and model_input_str.endswith(']'):
+        try:
+            return json.loads(model_input_str)
+        except json.JSONDecodeError:
+            print(f"❌ 无效的JSON格式: {model_input_str}")
+            sys.exit(1)
+    
+    # 按逗号分隔多个模型（向后兼容）
+    if ',' in model_input_str:
+        models = [model.strip() for model in model_input_str.split(',')]
+        print(f"🔍 检测到多个模型: {models}")
+        return models
+    
+    # 单个路径 - 检查是否为目录
+    model_path = model_input_str.strip()
+    if os.path.isdir(model_path):
+        print(f"🔍 检测到目录，自动扫描子目录: {model_path}")
+        return discover_model_directories(model_path)
+    else:
+        # 单个模型文件/目录
+        if os.path.exists(model_path):
+            print(f"🔍 单个模型: {model_path}")
+            return [model_path]
+        else:
+            print(f"⚠️ 路径不存在，但继续处理: {model_path}")
+            return [model_path]
+
+def generate_model_task_combinations(model_list, task_list):
+    """
+    生成模型和任务的所有组合
+    
+    返回：
+    - convert_jobs: [{"model": "/path/to/model", "index": 0}, ...]
+    - eval_jobs: [{"model": "/path/to/model", "task": "task_name", "model_index": 0, "task_index": 0}, ...]
+    """
+    convert_jobs = []
+    eval_jobs = []
+    
+    for model_idx, model_path in enumerate(model_list):
+        # 转换任务（使用 "index" 而不是 "model_index" 来匹配 WorkflowTemplate）
+        convert_jobs.append({
+            "model": model_path,
+            "index": model_idx
+        })
+        
+        # 评估任务
+        for task_idx, task in enumerate(task_list):
+            eval_jobs.append({
+                "model": model_path,
+                "task": task,
+                "model_index": model_idx,
+                "task_index": task_idx
+            })
+    
+    return convert_jobs, eval_jobs
+
 def parse_task_input(task_input_str):
     """
     解析任务输入，支持多种格式
@@ -669,7 +810,7 @@ def main():
     
     # 提交工作流参数
     parser.add_argument('--model_input', type=str,
-                       help='模型输入路径，例如: /models/deepseek-v2')
+                       help='模型输入路径。支持: 1) 目录路径(自动发现子目录): "/models" 2) 单个模型: "/models/deepseek-v2" 3) 多个模型: "/models/m1,/models/m2"')
     parser.add_argument('--task_input', type=str,
                        help='评估任务列表，支持格式: "mmlu,hellaswag" 或 \'["mmlu", "hellaswag"]\'')
     parser.add_argument('--job_name', type=str,
@@ -740,8 +881,17 @@ def main():
     
     # 提交工作流
     if args.model_input and args.task_input:
+        # 解析模型输入
+        model_input = parse_model_input(args.model_input)
+        if not model_input:
+            print("❌ 模型输入不能为空")
+            sys.exit(1)
+            
         # 解析任务输入
         task_input = parse_task_input(args.task_input)
+        if not task_input:
+            print("❌ 任务输入不能为空")
+            sys.exit(1)
         
         # 生成任务名称
         if not args.job_name:
@@ -749,17 +899,32 @@ def main():
             timestamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
             args.job_name = f"eval-{timestamp}"
         
-        print(f"📝 任务参数:")
+        print(f"📝 嵌套工作流参数:")
         print(f"  任务名称: {args.job_name}")
-        print(f"  模型路径: {args.model_input}")
+        print(f"  模型列表: {model_input}")
         print(f"  评估任务: {task_input}")
         print(f"  项目名称: {args.project_name}")
+        print()
+        print(f"📊 执行计划（嵌套流水线）:")
+        print(f"  🏭 模型流水线数: {len(model_input)}")
+        print(f"  📊 每个模型的任务数: {len(task_input)}")
+        print(f"  🎯 总评估任务数: {len(model_input) * len(task_input)}")
+        print()
+        
+        # 显示详细的执行计划
+        print("🏭 流水线详情:")
+        for i, model_path in enumerate(model_input):
+            model_name = model_path.split('/')[-1]
+            print(f"  流水线 {i+1}: {model_name}")
+            print(f"    🔄 转换: {model_path}")
+            for j, task in enumerate(task_input):
+                print(f"    📊 评估 {j+1}: {task}")
         print()
         
         # 提交工作流
         workflow_name = client.submit_workflow(
             job_name=args.job_name,
-            model_input=args.model_input,
+            model_input=model_input,
             task_input=task_input
         )
         
@@ -781,9 +946,12 @@ def main():
     else:
         print("❌ 请提供必要的参数来提交工作流，或使用管理命令")
         print("示例:")
-        print("  # 提交工作流")
+        print("  # 提交工作流（新功能：自动发现模型目录）")
+        print("  python3 argo_api_client.py --model_input /models --task_input 'mmlu,hellaswag'")
+        print("  python3 argo_api_client.py --model_input /models --task_input 'wikitext,games;hellaswag,truthfulqa'")
+        print("  # 提交工作流（传统方式）")
         print("  python3 argo_api_client.py --model_input /models/deepseek-v2 --task_input 'mmlu,hellaswag'")
-        print("  python3 argo_api_client.py --model_input /models/deepseek-v2 --task_input '[\"mmlu\", \"hellaswag\"]' --watch")
+        print("  python3 argo_api_client.py --model_input '/models/m1,/models/m2' --task_input '[\"mmlu\", \"hellaswag\"]' --watch")
         print("  # 管理工作流")
         print("  python3 argo_api_client.py --list")
         print("  python3 argo_api_client.py --status workflow-name")

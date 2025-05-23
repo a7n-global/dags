@@ -1,0 +1,268 @@
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: deepseek-multi-model-eval-template
+  namespace: argo
+spec:
+  # 工作流参数
+  arguments:
+    parameters:
+    - name: job_name
+      value: "multi-eval-test"
+    - name: project_name
+      value: "deepseek_v2_lite"
+    - name: model_list
+      value: '[]'  # 模型列表: ["/path/to/model1", "/path/to/model2"]
+    - name: task_list
+      value: '[]'  # 任务列表: ["task1", "task2"]
+
+  # 入口点
+  entrypoint: multi-model-eval-main
+
+  templates:
+  # 主工作流模板 - 为每个模型启动独立流水线
+  - name: multi-model-eval-main
+    steps:
+    - - name: model-pipeline
+        template: single-model-pipeline
+        arguments:
+          parameters:
+          - name: job_name
+            value: "{{workflow.parameters.job_name}}"
+          - name: project_name
+            value: "{{workflow.parameters.project_name}}"
+          - name: model_path
+            value: "{{item.path}}"
+          - name: model_index
+            value: "{{item.index}}"
+          - name: task_list
+            value: "{{workflow.parameters.task_list}}"
+        withParam: "{{workflow.parameters.model_list}}"
+
+  # 单个模型的完整流水线：转换 → 评估
+  - name: single-model-pipeline
+    inputs:
+      parameters:
+      - name: job_name
+      - name: project_name
+      - name: model_path
+      - name: model_index
+      - name: task_list
+    steps:
+    # 第一步：转换这个模型
+    - - name: convert-model
+        template: convert-deepseek-to-hf
+        arguments:
+          parameters:
+          - name: job_name
+            value: "{{inputs.parameters.job_name}}"
+          - name: model_path
+            value: "{{inputs.parameters.model_path}}"
+          - name: model_index
+            value: "{{inputs.parameters.model_index}}"
+    
+    # 第二步：并行运行这个模型的所有评估任务
+    - - name: eval-tasks
+        template: run-single-eval
+        arguments:
+          parameters:
+          - name: job_name
+            value: "{{inputs.parameters.job_name}}"
+          - name: project_name
+            value: "{{inputs.parameters.project_name}}"
+          - name: model_path
+            value: "{{inputs.parameters.model_path}}"
+          - name: task_name
+            value: "{{item}}"
+          - name: model_index
+            value: "{{inputs.parameters.model_index}}"
+          - name: task_index
+            value: "{{item}}"
+        withParam: "{{inputs.parameters.task_list}}"
+
+  # 模型转换模板
+  - name: convert-deepseek-to-hf
+    inputs:
+      parameters:
+      - name: job_name
+      - name: model_path
+      - name: model_index
+    container:
+      image: hub.anuttacon.com/nvcr.io/nvidia/nemo:25.02.rc5
+      command: [bash]
+      args:
+      - "/mnt/project/llm/users/xug/code/trial/Ocean/users/xuguang/evaluation/airflow_pipeline/airflow_deepseek_convert.sh"
+      - "{{inputs.parameters.model_path}}"
+      - "{{workflow.name}}-convert-m{{inputs.parameters.model_index}}"
+      
+      # 环境变量
+      env:
+      - name: MLP_CLUSTER
+        value: "il2"
+      - name: MLP_PROJECT
+        value: "llm"
+      - name: MLP_USER
+        value: "xuguang.zhao"
+      - name: NCCL_DEBUG
+        value: "WARN"
+      - name: NCCL_SOCKET_IFNAME
+        value: "eth0"
+      - name: NCCL_IB_QPS_PER_CONNECTION
+        value: "4"
+      - name: TORCH_CPP_LOG_LEVEL
+        value: "INFO"
+      - name: TORCH_DISTRIBUTED_DEBUG
+        value: "INFO"
+      - name: RAY_COLOR_PREFIX
+        value: "0"
+      - name: PYTHONUNBUFFERED
+        value: "1"
+      - name: MASTER_PORT
+        value: "23456"
+      - name: PET_MASTER_PORT
+        value: "23456"
+      - name: MASTER_ADDR
+        value: "localhost"
+      - name: PET_MASTER_ADDR
+        value: "localhost"
+      - name: RANK
+        value: "0"
+      - name: NODE_RANK
+        value: "0"
+      - name: PET_NODE_RANK
+        value: "0"
+      - name: PET_NNODES
+        value: "1"
+
+      # 资源限制
+      resources:
+        limits:
+          cpu: "53200m"
+          memory: "498073Mi"
+        requests:
+          cpu: "50400m"
+          memory: "71859Mi"
+
+      # 卷挂载
+      volumeMounts:
+      - name: host-path-share
+        mountPath: /mnt/share
+      - name: host-path-project
+        mountPath: /mnt/project
+      - name: host-path-personal
+        mountPath: /mnt/personal
+      - name: git-volume
+        mountPath: /opt/scripts
+
+    # 卷定义
+    volumes:
+    - name: host-path-share
+      hostPath:
+        path: /mnt/xstorage/share
+        type: Directory
+    - name: host-path-project
+      hostPath:
+        path: /mnt/xstorage/project/project-llm
+        type: Directory
+    - name: host-path-personal
+      hostPath:
+        path: /mnt/xstorage/personal/xuguang.zhao
+        type: Directory
+    - name: git-volume
+      emptyDir: {}
+
+  # 评估任务模板
+  - name: run-single-eval
+    inputs:
+      parameters:
+      - name: job_name
+      - name: project_name
+      - name: model_path
+      - name: task_name
+      - name: model_index
+      - name: task_index
+    container:
+      image: hub.anuttacon.com/docker.io/vllm/vllm-openai:v0.6.4
+      command: [bash]
+      args:
+      - "/mnt/project/llm/users/xug/code/trial/Ocean/users/xuguang/evaluation/airflow_pipeline/airflow_llm_evaluation_harness.sh"
+      - "{{inputs.parameters.model_path}}/hf"
+      - "{{inputs.parameters.project_name}}"
+      - "{{pod.name}}"
+      - "{{inputs.parameters.task_name}}"
+
+      # 环境变量
+      env:
+      - name: MLP_CLUSTER
+        value: "il2"
+      - name: MLP_PROJECT
+        value: "llm"
+      - name: MLP_USER
+        value: "xuguang.zhao"
+      - name: NCCL_DEBUG
+        value: "WARN"
+      - name: NCCL_SOCKET_IFNAME
+        value: "eth0"
+      - name: NCCL_IB_QPS_PER_CONNECTION
+        value: "4"
+      - name: TORCH_CPP_LOG_LEVEL
+        value: "INFO"
+      - name: TORCH_DISTRIBUTED_DEBUG
+        value: "INFO"
+      - name: RAY_COLOR_PREFIX
+        value: "0"
+      - name: PYTHONUNBUFFERED
+        value: "1"
+      - name: MASTER_PORT
+        value: "23456"
+      - name: PET_MASTER_PORT
+        value: "23456"
+      - name: MASTER_ADDR
+        value: "localhost"
+      - name: PET_MASTER_ADDR
+        value: "localhost"
+      - name: RANK
+        value: "0"
+      - name: NODE_RANK
+        value: "0"
+      - name: PET_NODE_RANK
+        value: "0"
+      - name: PET_NNODES
+        value: "1"
+
+      # 资源限制
+      resources:
+        limits:
+          cpu: "53200m"
+          memory: "498073Mi"
+        requests:
+          cpu: "50400m"
+          memory: "71859Mi"
+
+      # 卷挂载
+      volumeMounts:
+      - name: host-path-share
+        mountPath: /mnt/share
+      - name: host-path-project
+        mountPath: /mnt/project
+      - name: host-path-personal
+        mountPath: /mnt/personal
+      - name: git-volume
+        mountPath: /opt/scripts
+
+    # 卷定义
+    volumes:
+    - name: host-path-share
+      hostPath:
+        path: /mnt/xstorage/share
+        type: Directory
+    - name: host-path-project
+      hostPath:
+        path: /mnt/xstorage/project/project-llm
+        type: Directory
+    - name: host-path-personal
+      hostPath:
+        path: /mnt/xstorage/personal/xuguang.zhao
+        type: Directory
+    - name: git-volume
+      emptyDir: {} 
