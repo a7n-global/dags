@@ -16,14 +16,29 @@ import time
 import urllib3
 import argparse
 import sys
+import os
 
 # 忽略SSL证书警告
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 class ArgoWorkflowsClient:
-    def __init__(self, server_url="https://10.218.61.160"):
-        self.server_url = server_url
+    def __init__(self, server_url=None):
+        # 自动检测运行环境
+        if server_url is None:
+            # 检查是否在 Kubernetes Pod 内部
+            if os.path.exists('/var/run/secrets/kubernetes.io/serviceaccount'):
+                # Pod 内部，使用内部服务名
+                self.server_url = "https://argo-server.argo.svc.cluster.local:2746"
+                print("🔍 检测到运行在 Kubernetes Pod 内，使用内部服务地址")
+            else:
+                # Pod 外部，使用外部 LoadBalancer IP
+                self.server_url = "https://10.218.61.160"
+                print("🔍 检测到运行在 Pod 外部，使用 LoadBalancer 地址")
+        else:
+            self.server_url = server_url
+            
         self.namespace = "argo"
+        print(f"🌐 Argo Server URL: {self.server_url}")
         
     def submit_workflow(self, job_name, model_input, task_input):
         """提交工作流"""
@@ -81,19 +96,46 @@ class ArgoWorkflowsClient:
         """列出所有工作流"""
         url = f"{self.server_url}/api/v1/workflows/{self.namespace}"
         
-        response = requests.get(url, verify=False)
-        
-        if response.status_code == 200:
-            workflows = response.json()
-            print("工作流列表:")
-            for wf in workflows.get('items', []):
-                name = wf['metadata']['name']
-                status = wf['status']['phase']
-                created = wf['metadata'].get('creationTimestamp', 'N/A')
-                print(f"  {name}: {status} (创建时间: {created})")
-            return workflows
-        else:
-            print(f"获取列表失败: {response.status_code}")
+        try:
+            response = requests.get(url, verify=False, timeout=30)
+            
+            print(f"🔍 请求 URL: {url}")
+            print(f"📡 响应状态码: {response.status_code}")
+            
+            if response.status_code == 200:
+                try:
+                    workflows = response.json()
+                    if workflows is None:
+                        print("❌ API 返回了空响应")
+                        return None
+                        
+                    items = workflows.get('items', [])
+                    if not items:
+                        print("📝 暂无工作流")
+                        return workflows
+                        
+                    print("工作流列表:")
+                    for wf in items:
+                        name = wf['metadata']['name']
+                        status = wf['status']['phase']
+                        created = wf['metadata'].get('creationTimestamp', 'N/A')
+                        print(f"  {name}: {status} (创建时间: {created})")
+                    return workflows
+                except json.JSONDecodeError as e:
+                    print(f"❌ JSON 解析失败: {e}")
+                    print(f"🔍 响应内容: {response.text[:500]}...")
+                    return None
+            else:
+                print(f"❌ 获取列表失败: {response.status_code}")
+                print(f"🔍 错误内容: {response.text}")
+                return None
+                
+        except requests.exceptions.RequestException as e:
+            print(f"❌ 网络请求失败: {e}")
+            print(f"🔍 请检查 Argo Server 是否可访问: {self.server_url}")
+            return None
+        except Exception as e:
+            print(f"❌ 未知错误: {e}")
             return None
     
     def get_workflow_logs(self, workflow_name):
@@ -134,8 +176,8 @@ def main():
     parser = argparse.ArgumentParser(description='Argo Workflows API 客户端')
     
     # 基础参数
-    parser.add_argument('--server', default='https://10.218.61.160', 
-                       help='Argo Server URL (默认: https://10.218.61.160)')
+    parser.add_argument('--server', default=None, 
+                       help='Argo Server URL (默认: 自动检测 Pod内部/外部环境)')
     
     # 提交工作流参数
     parser.add_argument('--model_input', type=str,
