@@ -153,7 +153,14 @@ class ArgoWorkflowsClient:
             return None
 
 def parse_task_input(task_input_str):
-    """解析任务输入，支持多种格式"""
+    """
+    解析任务输入，支持多种格式
+    
+    格式说明：
+    - 逗号分隔：合并为一个任务，如 "hellaswag,truthfulqa" → ["hellaswag truthfulqa"]
+    - 分号分隔：创建多个任务，如 "hellaswag,truthfulqa;a,b,c" → ["hellaswag truthfulqa", "a b c"]
+    - JSON数组：直接解析，如 '["task1", "task2"]'
+    """
     if not task_input_str:
         return []
     
@@ -165,9 +172,29 @@ def parse_task_input(task_input_str):
             print(f"❌ 无效的JSON格式: {task_input_str}")
             sys.exit(1)
     
-    # 如果是逗号分隔的字符串
+    # 按分号分隔任务组
+    if ';' in task_input_str:
+        task_groups = task_input_str.split(';')
+        result = []
+        for i, group in enumerate(task_groups):
+            group = group.strip()
+            if ',' in group:
+                # 组内逗号分隔的子任务，合并为一个字符串
+                subtasks = [task.strip() for task in group.split(',')]
+                merged_task = ' '.join(subtasks)
+                result.append(merged_task)
+                print(f"🔍 任务组 {i+1}: {subtasks} → 合并为: '{merged_task}'")
+            else:
+                result.append(group)
+                print(f"🔍 任务组 {i+1}: 单任务 '{group}'")
+        return result
+    
+    # 如果只有逗号分隔，合并为一个任务
     if ',' in task_input_str:
-        return [task.strip() for task in task_input_str.split(',')]
+        subtasks = [task.strip() for task in task_input_str.split(',')]
+        merged_task = ' '.join(subtasks)
+        print(f"🔍 检测到逗号分隔的子任务: {subtasks} → 合并为: '{merged_task}'")
+        return [merged_task]
     
     # 单个任务
     return [task_input_str.strip()]
