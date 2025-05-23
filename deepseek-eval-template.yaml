@@ -84,7 +84,7 @@ spec:
       args:
       - "/mnt/project/llm/users/xug/code/trial/Ocean/users/xuguang/evaluation/airflow_pipeline/airflow_deepseek_convert.sh"
       - "{{inputs.parameters.model_input}}"
-      - "{{inputs.parameters.job_name}}"
+      - "{{workflow.name}}-convert"
       
       # 环境变量
       env:
@@ -178,7 +178,7 @@ spec:
       - "/mnt/project/llm/users/xug/code/trial/Ocean/users/xuguang/evaluation/airflow_pipeline/airflow_llm_evaluation_harness.sh"
       - "{{inputs.parameters.model_input}}/hf"
       - "{{inputs.parameters.project_name}}"
-      - "{{inputs.parameters.job_name}}"
+      - "{{pod.name}}"
       - "{{inputs.parameters.task_name}}"
 
       # 环境变量

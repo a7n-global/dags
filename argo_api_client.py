@@ -151,6 +151,117 @@ class ArgoWorkflowsClient:
         else:
             print(f"获取日志失败: {response.status_code}")
             return None
+    
+    def get_workflow_tasks(self, workflow_name):
+        """获取工作流中每个任务的详细状态"""
+        url = f"{self.server_url}/api/v1/workflows/{self.namespace}/{workflow_name}"
+        
+        try:
+            response = requests.get(url, verify=False, timeout=30)
+            
+            if response.status_code == 200:
+                workflow = response.json()
+                
+                print(f"📊 工作流 {workflow_name} 任务详情:")
+                print("=" * 60)
+                
+                # 获取总体状态
+                overall_status = workflow['status']['phase']
+                start_time = workflow['metadata'].get('creationTimestamp', 'N/A')
+                print(f"🎯 总体状态: {overall_status}")
+                print(f"⏰ 开始时间: {start_time}")
+                print()
+                
+                # 获取所有节点（任务）状态
+                nodes = workflow['status'].get('nodes', {})
+                
+                if not nodes:
+                    print("❌ 未找到任务节点信息")
+                    return None
+                
+                # 按照任务类型分组显示
+                convert_tasks = []
+                eval_tasks = []
+                other_tasks = []
+                
+                for node_id, node in nodes.items():
+                    node_name = node.get('displayName', node.get('name', 'unknown'))
+                    phase = node.get('phase', 'Unknown')
+                    start_time = node.get('startedAt', 'N/A')
+                    finish_time = node.get('finishedAt', 'N/A')
+                    
+                    task_info = {
+                        'name': node_name,
+                        'phase': phase,
+                        'start': start_time,
+                        'finish': finish_time,
+                        'node_id': node_id
+                    }
+                    
+                    if 'convert' in node_name.lower():
+                        convert_tasks.append(task_info)
+                    elif 'eval' in node_name.lower() or 'run-eval' in node_name.lower():
+                        eval_tasks.append(task_info)
+                    else:
+                        other_tasks.append(task_info)
+                
+                # 显示转换任务
+                if convert_tasks:
+                    print("🔄 模型转换任务:")
+                    for task in convert_tasks:
+                        status_icon = self._get_status_icon(task['phase'])
+                        print(f"  {status_icon} {task['name']}: {task['phase']}")
+                        if task['start'] != 'N/A':
+                            print(f"     开始: {task['start']}")
+                        if task['finish'] != 'N/A':
+                            print(f"     结束: {task['finish']}")
+                        print()
+                
+                # 显示评估任务
+                if eval_tasks:
+                    print("📊 评估任务:")
+                    for task in eval_tasks:
+                        status_icon = self._get_status_icon(task['phase'])
+                        print(f"  {status_icon} {task['name']}: {task['phase']}")
+                        if task['start'] != 'N/A':
+                            print(f"     开始: {task['start']}")
+                        if task['finish'] != 'N/A':
+                            print(f"     结束: {task['finish']}")
+                        print()
+                
+                # 显示其他任务
+                if other_tasks:
+                    print("🔧 其他任务:")
+                    for task in other_tasks:
+                        status_icon = self._get_status_icon(task['phase'])
+                        print(f"  {status_icon} {task['name']}: {task['phase']}")
+                        if task['start'] != 'N/A':
+                            print(f"     开始: {task['start']}")
+                        if task['finish'] != 'N/A':
+                            print(f"     结束: {task['finish']}")
+                        print()
+                
+                return workflow
+            else:
+                print(f"❌ 获取任务状态失败: {response.status_code}")
+                return None
+                
+        except Exception as e:
+            print(f"❌ 获取任务状态时出错: {e}")
+            return None
+    
+    def _get_status_icon(self, phase):
+        """根据任务状态返回对应的图标"""
+        status_icons = {
+            'Pending': '⏳',
+            'Running': '🔄',
+            'Succeeded': '✅',
+            'Failed': '❌',
+            'Error': '💥',
+            'Skipped': '⏭️',
+            'Omitted': '⚪'
+        }
+        return status_icons.get(phase, '❓')
 
 def parse_task_input(task_input_str):
     """
@@ -221,6 +332,8 @@ def main():
                        help='列出所有工作流')
     parser.add_argument('--status', type=str,
                        help='查看指定工作流状态')
+    parser.add_argument('--tasks', type=str,
+                       help='查看指定工作流的所有任务详细状态')
     parser.add_argument('--logs', type=str,
                        help='查看指定工作流日志')
     
@@ -241,6 +354,11 @@ def main():
     # 查看工作流状态
     if args.status:
         client.get_workflow_status(args.status)
+        return
+    
+    # 查看工作流任务详情
+    if args.tasks:
+        client.get_workflow_tasks(args.tasks)
         return
     
     # 查看工作流日志
@@ -297,6 +415,7 @@ def main():
         print("  # 管理工作流")
         print("  python3 argo_api_client.py --list")
         print("  python3 argo_api_client.py --status workflow-name")
+        print("  python3 argo_api_client.py --tasks workflow-name")
         print("  python3 argo_api_client.py --logs workflow-name")
 
 if __name__ == "__main__":
