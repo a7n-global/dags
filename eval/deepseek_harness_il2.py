@@ -27,6 +27,11 @@ with DAG(
             type='string',
             description='eval test'
         ),
+        'project_name': Param(
+            default='deepseek_v2_lite',
+            type='string',
+            description='eval test'
+        ),
         'model_input': Param(
             default="",
             type='string',
@@ -140,9 +145,8 @@ with DAG(
         k8s.V1VolumeMount(name="git-volume", mount_path="/opt/scripts"),
     ]
 
-    # 主容器命令与参数 (一重列表)
-    eval_main_cmds = ["bash"]
-    eval_main_args = [
+    convert_main_cmds = ["bash"]
+    convert_main_args = [
         "/mnt/project/llm/users/xug/code/trial/Ocean/users/xuguang/evaluation/airflow_pipeline/airflow_deepseek_convert.sh",
         "{{ params.model_input }}",
         "{{ params.job_name }}",
@@ -156,8 +160,8 @@ with DAG(
         task_id="convert_deepseek_to_hf_task",  # 静态task_id
         namespace="airflow",
         image="hub.anuttacon.com/nvcr.io/nvidia/nemo:25.02.rc5",
-        cmds=eval_main_cmds,
-        arguments=eval_main_args,
+        cmds=convert_main_cmds,
+        arguments=convert_main_args,
         container_resources=resources_request,
         volumes=eval_volumes,
         volume_mounts=volume_mounts,
@@ -169,5 +173,33 @@ with DAG(
         do_xcom_push=False,
     )
     
-    # Set task dependency
+    eval_main_cmds = ["bash"]
+    eval_main_args = [
+        "/mnt/project/llm/users/xug/code/trial/Ocean/users/xuguang/evaluation/airflow_pipeline/airflow_llm_evaluation_harness.sh",
+    ]
+    
+    eval_tasks = []  # 存储所有eval任务
+    for i, task_input in enumerate(dag.params['task_input']):
+        task_id = f"llm_eval_harness_task_{i}_{task_input}"  # 使用索引而不是运行时参数
+        eval_task = KubernetesPodOperator(
+            task_id=task_id,
+            namespace="airflow",
+            image="hub.anuttacon.com/docker.io/vllm/vllm-openai:v0.6.4",
+            cmds=eval_main_cmds,
+            arguments=eval_main_args + ["{{ params.model_input }}/hf"] + ["{{ params.project_name }}"] + ["{{ params.job_name }}"] + [task_input],
+            container_resources=resources_request,
+            volumes=eval_volumes,
+            volume_mounts=volume_mounts,
+            env_vars=eval_env_vars,
+            get_logs=True,
+            startup_timeout_seconds=600,
+            is_delete_operator_pod=True,
+            in_cluster=True,
+            do_xcom_push=False,
+        )
+        eval_tasks.append(eval_task)
+    
+    # Set task dependencies
     start >> convert_task
+    for eval_task in eval_tasks:
+        convert_task >> eval_task  # eval任务在convert任务完成后执行
