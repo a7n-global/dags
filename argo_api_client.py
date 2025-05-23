@@ -221,11 +221,11 @@ class ArgoWorkflowsClient:
                         'convert-model' in node_name.lower()):
                         # 转换任务（支持单模型、多模型和嵌套工作流）
                         convert_tasks.append(task_info)
-                    elif (('run-eval' in node_name.lower() and ':' in node_name) or 
-                          node_name.startswith('eval-combinations') or
+                    elif ('run-eval' in node_name.lower() or 
                           'eval-tasks' in node_name.lower() or
-                          node_name.startswith('model-pipeline')):
-                        # 评估任务（支持单模型、多模型和嵌套工作流）
+                          node_name.startswith('eval-combinations') or
+                          'run-single-eval' in node_name.lower()):
+                        # 评估任务（放宽条件，支持嵌套工作流）
                         eval_tasks.append(task_info)
                     else:
                         other_tasks.append(task_info)
@@ -347,8 +347,11 @@ class ArgoWorkflowsClient:
                     if 'convert' in node_name.lower() or node_name.startswith('convert-models'):
                         # 转换任务（支持单模型和多模型工作流）
                         convert_tasks.append(task_info)
-                    elif ('run-eval' in node_name.lower() and ':' in node_name) or node_name.startswith('eval-combinations'):
-                        # 评估任务（支持单模型和多模型工作流）
+                    elif ('run-eval' in node_name.lower() or 
+                          'eval-tasks' in node_name.lower() or
+                          node_name.startswith('eval-combinations') or
+                          'run-single-eval' in node_name.lower()):
+                        # 评估任务（放宽条件，支持嵌套工作流）
                         eval_tasks.append(task_info)
                     else:
                         other_tasks.append(task_info)
@@ -510,8 +513,11 @@ class ArgoWorkflowsClient:
                     if 'convert' in node_name.lower() or node_name.startswith('convert-models'):
                         # 转换任务（支持单模型和多模型工作流）
                         convert_tasks.append(task_info)
-                    elif ('run-eval' in node_name.lower() and ':' in node_name) or node_name.startswith('eval-combinations'):
-                        # 评估任务（支持单模型和多模型工作流）
+                    elif ('run-eval' in node_name.lower() or 
+                          'eval-tasks' in node_name.lower() or
+                          node_name.startswith('eval-combinations') or
+                          'run-single-eval' in node_name.lower()):
+                        # 评估任务（放宽条件，支持嵌套工作流）
                         eval_tasks.append(task_info)
                 
                 # 添加任务到表格
