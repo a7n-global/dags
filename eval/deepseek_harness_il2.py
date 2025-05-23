@@ -28,9 +28,9 @@ with DAG(
             description='eval test'
         ),
         'model_input': Param(
-            default=['a', 'b'],
-            type='array',
-            description='List of eval tasks'
+            default="",
+            type='string',
+            description='model input'
         ),
         'task_input': Param(
             default=['a', 'b'],
@@ -141,7 +141,7 @@ with DAG(
     ]
 
     # 主容器命令与参数 (一重列表)
-    eval_main_cmds = ["python3"]
+    eval_main_cmds = ["bash"]
     eval_main_args = [
         "/mnt/project/llm/users/xug/code/trial/Ocean/users/xuguang/evaluation/airflow_pipeline/airflow_deepseek_convert.sh",
         "{{ params.model_input }}",
@@ -151,28 +151,23 @@ with DAG(
     eval_env_vars = basic_env_vars.copy()
     eval_volumes = basic_volumes.copy()
     
-    # Create multiple quant tasks dynamically
-    eval_tasks = []
-    for model_input in dag.params['model_input']:
-        task_id = f"convert_deepseek_to_hf_task_{{ params.job_name }}"
-        quant_task = KubernetesPodOperator(
-            task_id=task_id,
-            namespace="airflow",
-            image="hub.anuttacon.com/nvcr.io/nvidia/nemo:25.02.rc5",
-            cmds=eval_main_cmds,
-            arguments=eval_main_args,
-            container_resources=resources_request,
-            volumes=eval_volumes,
-            volume_mounts=volume_mounts,
-            env_vars=eval_env_vars,
-            get_logs=True,
-            startup_timeout_seconds=600,
-            is_delete_operator_pod=True,  # 是否结束后删除 Pod
-            in_cluster=True,
-            do_xcom_push=False,
-        )
-        eval_tasks.append(quant_task)
+    # Create convert task
+    convert_task = KubernetesPodOperator(
+        task_id="convert_deepseek_to_hf_task",  # 静态task_id
+        namespace="airflow",
+        image="hub.anuttacon.com/nvcr.io/nvidia/nemo:25.02.rc5",
+        cmds=eval_main_cmds,
+        arguments=eval_main_args,
+        container_resources=resources_request,
+        volumes=eval_volumes,
+        volume_mounts=volume_mounts,
+        env_vars=eval_env_vars,
+        get_logs=True,
+        startup_timeout_seconds=600,
+        is_delete_operator_pod=True,
+        in_cluster=True,
+        do_xcom_push=False,
+    )
     
-    # Set task dependencies - all quant tasks run in parallel after start
-    for task in eval_tasks:
-        start >> task
+    # Set task dependency
+    start >> convert_task
