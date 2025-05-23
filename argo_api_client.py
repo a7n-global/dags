@@ -483,12 +483,12 @@ class ArgoWorkflowsClient:
                         'pod_name': pod_name
                     }
                     
+                    # 只保留有意义的任务
                     if 'convert' in node_name.lower():
                         convert_tasks.append(task_info)
-                    elif 'eval' in node_name.lower() or 'run-eval' in node_name.lower():
+                    elif 'run-eval' in node_name.lower() and ':' in node_name:
+                        # 只显示具体的 run-eval 任务，排除其他评估相关的管理任务
                         eval_tasks.append(task_info)
-                    else:
-                        other_tasks.append(task_info)
                 
                 # 添加任务到表格
                 # 转换任务
@@ -505,12 +505,14 @@ class ArgoWorkflowsClient:
                 
                 # 评估任务
                 for task in eval_tasks:
-                    # 识别评估任务的具体内容
+                    # 从任务名称中提取评估内容
                     task_type = "📊 评估"
-                    if 'run-eval' in task['name']:
-                        # 从任务名称中提取评估内容
-                        if ':' in task['name']:
-                            eval_content = task['name'].split(':', 1)[1].strip(')')
+                    if ':' in task['name']:
+                        eval_content = task['name'].split(':', 1)[1].strip(')')
+                        # 截取评估内容用于显示
+                        if len(eval_content) > 20:
+                            task_type = f"📊 {eval_content[:20]}..."
+                        else:
                             task_type = f"📊 {eval_content}"
                     
                     tasks_table.add_row(
@@ -523,19 +525,6 @@ class ArgoWorkflowsClient:
                         task['pod_name']
                     )
                 
-                # 其他任务（通常是workflow管理任务）
-                for task in other_tasks:
-                    if task['name'] not in ['[0]', '[1]'] or task['phase'] != 'Succeeded':  # 过滤掉成功的数组任务
-                        tasks_table.add_row(
-                            "🔧 其他",
-                            task['name'],
-                            self._get_status_text(task['phase']),
-                            self._format_time(task['start']),
-                            self._format_time(task['finish']),
-                            task['duration'],
-                            task['pod_name']
-                        )
-                
                 console.print(tasks_table)
                 
                 # 显示统计信息
@@ -543,7 +532,7 @@ class ArgoWorkflowsClient:
                 stats_table.add_column("状态", style="cyan")
                 stats_table.add_column("数量", style="green")
                 
-                all_tasks = convert_tasks + eval_tasks + other_tasks
+                all_tasks = convert_tasks + eval_tasks  # 只统计有意义的任务
                 status_counts = {}
                 for task in all_tasks:
                     status = task['phase']
