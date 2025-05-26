@@ -78,6 +78,8 @@ spec:
             value: "{{inputs.parameters.model_index}}"
           - name: task_index
             value: "{{item}}"
+          - name: output_path
+            value: "/mnt/project/workflow-results/{{workflow.name}}/model-{{inputs.parameters.model_index}}/{{item}}"
         withParam: "{{inputs.parameters.task_list}}"
 
   # 模型转换模板
@@ -193,6 +195,8 @@ spec:
 
       # 环境变量
       env:
+      - name: EVAL_OUTPUT_PATH
+        value: "{{inputs.parameters.output_path}}"
       - name: MLP_CLUSTER
         value: "il2"
       - name: MLP_PROJECT
