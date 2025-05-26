@@ -193,11 +193,10 @@ spec:
       - "{{inputs.parameters.project_name}}"
       - "{{pod.name}}"
       - "{{inputs.parameters.task_name}}"
+      - "{{inputs.parameters.output_path}}"
 
       # 环境变量
       env:
-      - name: EVAL_OUTPUT_PATH
-        value: "{{inputs.parameters.output_path}}"
       - name: MLP_CLUSTER
         value: "il2"
       - name: MLP_PROJECT
