@@ -79,7 +79,7 @@ spec:
           - name: task_index
             value: "{{item}}"
           - name: output_path
-            value: "/mnt/share/infra/eval_pipeline/results/{{workflow.name}}/model-{{inputs.parameters.model_index}}/{{item}}"
+            value: "/mnt/share/infra/eval_pipeline/results/{{workflow.name}}/model-{{inputs.parameters.model_index}}"
         withParam: "{{inputs.parameters.task_list}}"
 
   # 模型转换模板
